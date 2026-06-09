@@ -42,11 +42,17 @@ function relativeDate(iso: string | null): string {
   return d.toLocaleDateString()
 }
 
+// Two-state repo component:
+// - Empty: prominent amber callout with inline add form (can't miss it)
+// - Filled: compact chips that can be managed inline
 function ReposSection({ projectId }: { projectId: string }) {
   const [repos, setRepos] = useState<Array<{ id: string; repo_name: string }>>([])
   const [allDirs, setAllDirs] = useState<string[]>([])
+  const [workDir, setWorkDir] = useState('~/Work')
   const [selected, setSelected] = useState('')
   const [adding, setAdding] = useState(false)
+  const [managing, setManaging] = useState(false)
+  const [loaded, setLoaded] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -55,6 +61,9 @@ function ReposSection({ projectId }: { projectId: string }) {
       const all = await window.api.repos.list()
       const linked = new Set(r.map((x: any) => x.repo_name))
       setAllDirs((all as string[]).filter((d: string) => !linked.has(d)))
+      const wd = await window.api.appConfig.get('work_dir')
+      setWorkDir(wd ?? '~/Work')
+      setLoaded(true)
     } catch {}
   }, [projectId])
 
@@ -66,51 +75,112 @@ function ReposSection({ projectId }: { projectId: string }) {
     try {
       await window.api.projectRepos.add(projectId, selected)
       setSelected('')
+      setManaging(false)
       await load()
     } finally { setAdding(false) }
   }
 
+  if (!loaded) return null
+
+  // Empty state — prominent prompt
+  if (repos.length === 0) {
+    return (
+      <div className="mx-6 mb-0 mt-0 rounded-xl border border-amber-700/50 bg-amber-900/20 p-4">
+        <div className="flex items-start gap-3">
+          <div className="w-8 h-8 rounded-lg bg-amber-700/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-300 mb-0.5">Link a local repo to get started</p>
+            <p className="text-xs text-amber-400/70 mb-3">
+              devbro needs to know where this project lives on your machine to open Claude sessions with the right context.
+            </p>
+            {allDirs.length > 0 ? (
+              <div className="flex items-center gap-2">
+                <select
+                  value={selected}
+                  onChange={e => setSelected(e.target.value)}
+                  className="flex-1 bg-gray-900/80 border border-amber-700/50 rounded-lg px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-amber-500 transition-colors"
+                >
+                  <option value="">Select a folder from {workDir}/…</option>
+                  {allDirs.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+                <button
+                  onClick={handleAdd}
+                  disabled={!selected || adding}
+                  className="flex-shrink-0 px-4 py-1.5 text-xs font-semibold bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white rounded-lg transition-colors"
+                >
+                  {adding ? 'Linking…' : 'Link repo'}
+                </button>
+              </div>
+            ) : (
+              <p className="text-xs text-amber-400/50 italic">
+                No folders found in {workDir}/ — add your project there first.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Filled state — compact chips in-line, expandable to manage
   return (
-    <div>
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Local Repos</p>
-      {repos.length === 0 && (
-        <p className="text-xs text-gray-600 italic mb-2">No repos linked — link a local folder to enable terminal context.</p>
-      )}
-      <div className="space-y-1 mb-2">
+    <div className="mx-6 mb-0 mt-0">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-gray-600 flex-shrink-0">Repos</span>
         {repos.map((r: any) => (
-          <div key={r.id} className="flex items-center gap-2 text-xs bg-gray-800/60 rounded-lg px-3 py-1.5">
+          <span key={r.id} className="flex items-center gap-1.5 text-xs bg-gray-800 border border-gray-700 rounded-md px-2 py-1 font-mono text-gray-300 group">
             <svg className="w-3 h-3 text-gray-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
             </svg>
-            <span className="flex-1 font-mono text-gray-300">~/Work/{r.repo_name}</span>
+            <span className="font-mono">{workDir}/{r.repo_name}</span>
             <button
               onClick={async () => { await window.api.projectRepos.remove(r.id); load() }}
-              className="text-gray-700 hover:text-red-400 transition-colors"
-              title="Remove"
+              className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-all ml-0.5 leading-none"
+              title="Unlink"
             >✕</button>
-          </div>
+          </span>
         ))}
-      </div>
-      {allDirs.length > 0 && (
-        <div className="flex items-center gap-2">
-          <select
-            value={selected}
-            onChange={e => setSelected(e.target.value)}
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-indigo-500"
-          >
-            <option value="">Select ~/Work/ folder…</option>
-            {allDirs.map(d => <option key={d} value={d}>{d}</option>)}
-          </select>
+        {/* Add another */}
+        {!managing && allDirs.length > 0 && (
           <button
-            onClick={handleAdd}
-            disabled={!selected || adding}
-            className="px-3 py-1 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-lg transition-colors"
+            onClick={() => setManaging(true)}
+            className="text-xs text-gray-600 hover:text-gray-300 transition-colors flex items-center gap-1 px-2 py-1 rounded-md hover:bg-gray-800 border border-transparent hover:border-gray-700"
           >
-            Add
+            <span>+</span> Add
           </button>
-        </div>
-      )}
+        )}
+        {managing && (
+          <>
+            <select
+              value={selected}
+              onChange={e => setSelected(e.target.value)}
+              className="bg-gray-800 border border-gray-700 rounded-md px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-indigo-500"
+            >
+              <option value="">Select folder…</option>
+              {allDirs.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+            <button
+              onClick={handleAdd}
+              disabled={!selected || adding}
+              className="px-3 py-1 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-md transition-colors"
+            >
+              Link
+            </button>
+            <button
+              onClick={() => { setManaging(false); setSelected('') }}
+              className="text-xs text-gray-600 hover:text-gray-400 transition-colors"
+            >
+              Cancel
+            </button>
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -208,6 +278,11 @@ export function ProjectView() {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Repo prompt — shown between header and body, spans full width */}
+      <div className="flex-shrink-0 pt-4">
+        <ReposSection projectId={activeProjectId} />
       </div>
 
       {/* Body */}
@@ -358,11 +433,6 @@ export function ProjectView() {
                 </div>
               </div>
             )}
-
-            {/* Repos */}
-            <div className="border-t border-gray-800 pt-4">
-              <ReposSection projectId={activeProjectId} />
-            </div>
 
             {details.updatedAt && (
               <p className="text-xs text-gray-600">Last updated {relativeDate(details.updatedAt)}</p>

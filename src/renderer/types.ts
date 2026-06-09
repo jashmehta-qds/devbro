@@ -338,4 +338,8 @@ export interface WindowApi {
     setActive: (type: string, config: Record<string, string>) => Promise<void>
     test: (type: string, config: Record<string, string>) => Promise<{ ok: boolean; message: string }>
   }
+  appConfig: {
+    get: (key: string) => Promise<string | null>
+    set: (key: string, value: string) => Promise<void>
+  }
 }

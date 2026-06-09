@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3'
 import path from 'path'
+import os from 'os'
 import { app } from 'electron'
 import fs from 'fs'
 
@@ -150,6 +151,14 @@ function migrate(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_status_changes_date ON status_changes(changed_at);
   `)
 
+  // App config key-value store
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `)
+
   // Connectors table (multi-tool support)
   db.exec(`
     CREATE TABLE IF NOT EXISTS connectors (
@@ -196,4 +205,15 @@ export function closeDb(): void {
   if (db) {
     db.close()
   }
+}
+
+/** Returns the configured work directory, expanded. Default: ~/Work */
+export function getWorkDir(): string {
+  try {
+    const row = getDb().prepare('SELECT value FROM app_config WHERE key = ?').get('work_dir') as any
+    if (row?.value) {
+      return row.value.replace(/^~/, os.homedir())
+    }
+  } catch {}
+  return path.join(os.homedir(), 'Work')
 }

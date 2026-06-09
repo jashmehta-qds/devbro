@@ -160,4 +160,9 @@ contextBridge.exposeInMainWorld('api', {
     test: (type: string, config: Record<string, string>) =>
       ipcRenderer.invoke('connector:test', type, config),
   },
+
+  appConfig: {
+    get: (key: string) => ipcRenderer.invoke('appConfig:get', key),
+    set: (key: string, value: string) => ipcRenderer.invoke('appConfig:set', key, value),
+  },
 })

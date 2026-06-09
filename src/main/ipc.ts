@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { randomUUID as uuidv4 } from 'crypto'
 import { getDb } from './db'
 import { getActiveConnector, createConnector, maskConfig, invalidateConnectorCache } from './connectors/index'
+import { getWorkDir } from './db'
 import {
   createTerminal,
   writeToTerminal,
@@ -267,7 +268,7 @@ export function registerIpcHandlers(win: BrowserWindow): void {
       try {
         const row = db.prepare('SELECT repo_name FROM project_repos WHERE linear_project_id = ? ORDER BY created_at ASC LIMIT 1').get(projectId) as any
         if (row?.repo_name) {
-          const p = pathM.default.join(home, 'Work', row.repo_name)
+          const p = pathM.default.join(getWorkDir(), row.repo_name)
           if (fsM.default.existsSync(p)) cwd = p
         }
       } catch {}
@@ -425,12 +426,23 @@ Rules for newPercent:
   )
 
   // ============================================================
-  // Repos handler — scans ~/Work for git repos
+  // App config handlers
+  // ============================================================
+  ipcMain.handle('appConfig:get', async (_event, key: string) => {
+    const db = getDb()
+    const row = db.prepare('SELECT value FROM app_config WHERE key = ?').get(key) as any
+    return row?.value ?? null
+  })
+
+  ipcMain.handle('appConfig:set', async (_event, key: string, value: string) => {
+    const db = getDb()
+    db.prepare('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)').run(key, value)
+  })
+
+  // Repos handler — scans work directory for folders
   // ============================================================
   ipcMain.handle('repos:list', async () => {
-    const os = require('os')
-    const fs = require('fs')
-    const workDir = require('path').join(os.homedir(), 'Work')
+    const workDir = getWorkDir()
     try {
       const entries = fs.readdirSync(workDir, { withFileTypes: true }) as any[]
       return entries
@@ -556,16 +568,16 @@ Rules for newPercent:
       const sessionId = uuidv4()
       const projectId = issueData?.project?.id as string | undefined
       // Resolve cwd first so context can include git status from the real repo
-      const home = process.env.HOME || os.homedir()
+      const workDir = getWorkDir()
       let previewCwd: string | undefined
       if (repoName) {
-        const p = path.join(home, 'Work', repoName)
+        const p = path.join(workDir, repoName)
         if (fs.existsSync(p)) previewCwd = p
       } else if (projectId) {
         const db = getDb()
         const row = db.prepare('SELECT repo_name FROM project_repos WHERE linear_project_id = ? ORDER BY created_at ASC LIMIT 1').get(projectId) as any
         if (row?.repo_name) {
-          const p = path.join(home, 'Work', row.repo_name)
+          const p = path.join(workDir, row.repo_name)
           if (fs.existsSync(p)) previewCwd = p
         }
       }
@@ -942,17 +954,17 @@ ${activityContext}`
   // Context preview + refresh-for-session
   // ============================================================
   ipcMain.handle('context:preview', async (_event, ticketId: string, issueData: any, repoName?: string) => {
-    const home = process.env.HOME || os.homedir()
+    const workDir = getWorkDir()
     const projectId = issueData?.project?.id as string | undefined
     let previewCwd: string | undefined
     if (repoName) {
-      const p = path.join(home, 'Work', repoName)
+      const p = path.join(workDir, repoName)
       if (fs.existsSync(p)) previewCwd = p
     } else if (projectId) {
       const db = getDb()
       const row = db.prepare('SELECT repo_name FROM project_repos WHERE linear_project_id = ? ORDER BY created_at ASC LIMIT 1').get(projectId) as any
       if (row?.repo_name) {
-        const p = path.join(home, 'Work', row.repo_name)
+        const p = path.join(workDir, row.repo_name)
         if (fs.existsSync(p)) previewCwd = p
       }
     }

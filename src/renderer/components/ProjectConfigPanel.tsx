@@ -193,6 +193,53 @@ function ConnectorCard({
   )
 }
 
+function WorkDirSetting() {
+  const [value, setValue] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    window.api.appConfig.get('work_dir').then(v => {
+      setValue(v ?? '~/Work')
+    }).catch(() => setValue('~/Work'))
+  }, [])
+
+  const handleSave = async () => {
+    const trimmed = value.trim() || '~/Work'
+    await window.api.appConfig.set('work_dir', trimmed)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <div>
+      <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Work Directory</h3>
+      <p className="text-xs text-gray-600 mb-2">
+        Root folder where your repos live. devbro scans this for folders to link to projects.
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          placeholder="~/Work"
+          className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 font-mono placeholder-gray-700 focus:outline-none focus:border-indigo-500 transition-colors"
+          onKeyDown={e => { if (e.key === 'Enter') handleSave() }}
+        />
+        <button
+          onClick={handleSave}
+          className={`flex-shrink-0 px-3 py-1.5 text-xs rounded-lg font-medium transition-colors ${
+            saved
+              ? 'bg-green-700/40 text-green-400 border border-green-700/40'
+              : 'bg-gray-800 border border-gray-700 text-gray-300 hover:border-gray-600 hover:text-gray-100'
+          }`}
+        >
+          {saved ? '✓ Saved' : 'Save'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function ProjectConfigPanel() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [savedConfigs, setSavedConfigs] = useState<Record<string, Record<string, string>>>({})
@@ -231,6 +278,10 @@ export function ProjectConfigPanel() {
               onActivate={() => { setActiveId(def.id); reload() }}
             />
           ))}
+        </div>
+
+        <div className="border-t border-gray-800 pt-5">
+          <WorkDirSetting />
         </div>
 
         <div className="border-t border-gray-800 pt-5">

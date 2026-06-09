@@ -5,7 +5,7 @@ import path from 'path'
 import os from 'os'
 import { randomUUID } from 'crypto'
 import { execSync } from 'child_process'
-import { getDb } from './db'
+import { getDb, getWorkDir } from './db'
 import { CONFIG_FILE } from './configLog'
 import { generateAndAppendProgress } from './progressSummary'
 
@@ -77,10 +77,11 @@ function sanitizeRepoName(name: string): string | null {
 
 function resolveCwd(ticketId: string, projectId: string | undefined, repoName: string | undefined): string {
   const home = process.env.HOME || os.homedir()
+  const workDir = getWorkDir()
   if (repoName) {
     const safe = sanitizeRepoName(repoName)
     if (!safe) return home
-    const repoPath = path.join(home, 'Work', safe)
+    const repoPath = path.join(workDir, safe)
     return fs.existsSync(repoPath) ? repoPath : home
   }
   try {
@@ -89,7 +90,7 @@ function resolveCwd(ticketId: string, projectId: string | undefined, repoName: s
       ? db.prepare('SELECT repo_name FROM project_repos WHERE linear_project_id = ? ORDER BY created_at ASC LIMIT 1').get(projectId) as any
       : null
     if (row?.repo_name) {
-      const repoPath = path.join(home, 'Work', row.repo_name)
+      const repoPath = path.join(workDir, row.repo_name)
       if (fs.existsSync(repoPath)) return repoPath
     }
   } catch {}
@@ -408,7 +409,7 @@ export async function buildContextContent(
     }
 
     if (projectRepos.length > 0) {
-      lines.push(`**Repos:** ${projectRepos.map((r: any) => `~/Work/${r.repo_name}`).join(', ')}`)
+      lines.push(`**Repos:** ${projectRepos.map((r: any) => `${getWorkDir()}/${r.repo_name}`).join(', ')}`)
       lines.push('')
     }
   }
