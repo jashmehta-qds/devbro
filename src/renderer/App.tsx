@@ -173,39 +173,43 @@ export default function App() {
     window.api.tabs.setOpen(tabs.map((t) => t.id)).catch(() => {})
   }, [tabs])
 
-  // Subscribe to live Linear issue updates from main-process polling
+  // Keep stable refs to store actions so IPC subscriptions never need to re-subscribe
+  const updateTabRef = useRef(updateTab)
+  const addNotificationRef = useRef(addNotification)
+  const setProgressRef = useRef(setProgress)
+  useEffect(() => { updateTabRef.current = updateTab }, [updateTab])
+  useEffect(() => { addNotificationRef.current = addNotification }, [addNotification])
+  useEffect(() => { setProgressRef.current = setProgress }, [setProgress])
+
+  // Subscribe to live Linear issue updates — empty dep array so listener is created once only
   useEffect(() => {
     const unsubscribe = window.api.linear.onIssueUpdated((fresh) => {
       if (!fresh?.id) return
       const list = tabsRef.current
       const existing = list.find((t) => t.id === fresh.id)
       if (!existing) return
-      const prevUpdated = existing.issue?.updatedAt
-        ? new Date(existing.issue.updatedAt).getTime()
-        : 0
+      const prevUpdated = existing.issue?.updatedAt ? new Date(existing.issue.updatedAt).getTime() : 0
       const nextUpdated = fresh.updatedAt ? new Date(fresh.updatedAt).getTime() : 0
       if (nextUpdated > prevUpdated) {
-        updateTab(fresh.id, { issue: fresh })
-        addNotification(`${fresh.identifier} updated in Linear`)
+        updateTabRef.current(fresh.id, { issue: fresh })
+        addNotificationRef.current(`${fresh.identifier} updated in Linear`)
       }
     })
     return () => { unsubscribe() }
-  }, [updateTab, addNotification])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Subscribe to auto-generated progress updates after Claude sessions end
+  // Subscribe to auto-generated progress updates — created once, uses stable refs
   useEffect(() => {
     const unsubscribe = window.api.progress.onUpdated(async ({ ticketId, summary, newPercent }) => {
-      // Reload progress from DB so the UI reflects the new log entry
       try {
         const p = await window.api.progress.get(ticketId)
-        if (p) setProgress(ticketId, p as any)
+        if (p) setProgressRef.current(ticketId, p as any)
       } catch {}
-      // Show a notification with the summary
       const truncated = summary.length > 80 ? summary.slice(0, 77) + '…' : summary
-      addNotification(`Progress: ${newPercent}% — ${truncated}`)
+      addNotificationRef.current(`Progress: ${newPercent}% — ${truncated}`)
     })
     return () => { unsubscribe() }
-  }, [setProgress, addNotification])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-gray-100 overflow-hidden">

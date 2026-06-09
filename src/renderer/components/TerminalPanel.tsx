@@ -94,7 +94,7 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
       fontSize: 13,
       lineHeight: 1.4,
       cursorBlink: true,
-      scrollback: 5000,
+      scrollback: 1000,
       allowProposedApi: true
     })
 
@@ -111,7 +111,8 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
     fitAddonRef.current = fitAddon
     xtermRef.current = term
 
-    term.onData((data) => {
+    // Store the dispose handle so we can clean up properly
+    const onDataDisposable = term.onData((data) => {
       if (sessionIdRef.current) {
         window.api.terminal.write(sessionIdRef.current, data)
       }
@@ -138,6 +139,7 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
 
     return () => {
       resizeObserver.disconnect()
+      onDataDisposable.dispose() // unsubscribe before dispose to prevent listener leak
       term.dispose()
       terminalRef.current = null
       fitAddonRef.current = null

@@ -1023,9 +1023,12 @@ ${activityContext}`
   // Open tabs polling (Phase 3 — live Linear awareness)
   // ============================================================
   let openTabIds: Set<string> = new Set()
-  ipcMain.handle('tabs:setOpen', async (_event, tabIds: string[]) => {
-    openTabIds = new Set(tabIds)
-  })
+  // Guard: only register tabs:setOpen once across hot-reloads / multi-window
+  if (!ipcMain.eventNames().includes('tabs:setOpen')) {
+    ipcMain.handle('tabs:setOpen', async (_event, tabIds: string[]) => {
+      openTabIds = new Set(tabIds)
+    })
+  }
 
   let pollingActive = false
   const pollInterval = setInterval(async () => {

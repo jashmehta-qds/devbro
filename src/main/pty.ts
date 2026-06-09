@@ -143,20 +143,40 @@ export async function createTerminal(
     sessions.get(sessionId)!.timeSessionId = tsId
   } catch {}
 
+  // Batch terminal output — accumulate for 16ms then flush as one IPC message.
+  // Sending every byte individually causes IPC queue to grow unbounded (60GB+).
+  let dataBuffer = ''
+  let flushTimer: ReturnType<typeof setTimeout> | null = null
+  const MAX_BUFFER = 65536 // force-flush if buffer hits 64KB
+
+  const flushBuffer = () => {
+    if (dataBuffer && !win.isDestroyed()) {
+      win.webContents.send(`terminal:data:${sessionId}`, dataBuffer)
+      dataBuffer = ''
+    }
+    flushTimer = null
+  }
+
   proc.onData((data) => {
-    win.webContents.send(`terminal:data:${sessionId}`, data)
+    dataBuffer += data
+    if (dataBuffer.length >= MAX_BUFFER) {
+      // Immediate flush when buffer is full
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
+      flushBuffer()
+    } else if (!flushTimer) {
+      flushTimer = setTimeout(flushBuffer, 16)
+    }
   })
 
-  // Launch claude — resume specific session if we have one, otherwise fresh
-  setTimeout(() => {
+  // Store timer IDs so we can cancel them if terminal is killed early
+  const launchTimer = setTimeout(() => {
     if (sessions.has(sessionId)) {
       const cmd = storedSessionId ? `claude --resume ${storedSessionId}\r` : `claude\r`
       proc.write(cmd)
     }
   }, 600)
 
-  // After claude has had time to start, detect and store the session ID
-  setTimeout(() => {
+  const detectTimer = setTimeout(() => {
     if (!storedSessionId) {
       const detected = detectLatestClaudeSession(cwd)
       if (detected) storeClaudeSessionId(ticketId, detected)
@@ -165,6 +185,16 @@ export async function createTerminal(
 
   proc.onExit(({ exitCode }) => {
     const endedAt = Date.now()
+    // Cancel pending timers to avoid orphaned callbacks
+    clearTimeout(launchTimer)
+    clearTimeout(detectTimer)
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
+    // Flush any remaining buffered output before exit
+    if (dataBuffer && !win.isDestroyed()) {
+      win.webContents.send(`terminal:data:${sessionId}`, dataBuffer)
+      dataBuffer = ''
+    }
+
     const session = sessions.get(sessionId)
 
     try {
