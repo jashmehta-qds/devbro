@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Electron builder artifacts
+dist-electron/
+release/
+*.dmg
+*.pkg
+*.exe
+*.AppImage
+*.snap
+*.deb
+*.rpm
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# TypeScript cache
+*.tsbuildinfo
