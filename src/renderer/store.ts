@@ -350,6 +350,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set((state) => {
       const idx = state.tabs.findIndex((t) => t.id === issueId)
       if (idx === -1) return {}
+      const closedTab = state.tabs[idx]
+      // Kill the pty for this tab so we don't orphan a Claude subprocess.
+      if (closedTab.terminalSessionId) {
+        window.api.terminal.kill(closedTab.terminalSessionId).catch(() => {})
+      }
       const newTabs = state.tabs.filter((t) => t.id !== issueId)
       let newActiveTabId = state.activeTabId
       if (state.activeTabId === issueId) {

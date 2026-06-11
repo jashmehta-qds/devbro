@@ -211,6 +211,25 @@ export default function App() {
     return () => { unsubscribe() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Clear stale terminalSessionId from any tab whose pty just exited —
+  // typically because the concurrent-sessions cap evicted it when a new
+  // session started on a different tab. Without this, the old tab would
+  // keep showing a green "live" dot and try to write to a dead session.
+  useEffect(() => {
+    const unsubscribe = window.api.terminal.onAnyExit(({ sessionId, evicted }) => {
+      const list = tabsRef.current
+      for (const t of list) {
+        if (t.terminalSessionId === sessionId) {
+          updateTabRef.current(t.id, { terminalSessionId: null, terminalOpen: false })
+          if (evicted) {
+            addNotificationRef.current(`${t.issue?.identifier || 'Session'} closed — only one Claude session can run at a time`)
+          }
+        }
+      }
+    })
+    return () => { unsubscribe() }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-gray-100 overflow-hidden">
       {/* Draggable title bar — full width strip, macOS traffic lights sit on top of the left ~80px */}

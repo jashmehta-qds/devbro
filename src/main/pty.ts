@@ -16,7 +16,28 @@ interface PtySession {
   timeSessionId?: string
   gitStartSha?: string | null
   sessionStartedAt: number
+  // Renderer is currently rendering this session. When false, we discard
+  // output into a small ring buffer instead of sending IPC messages.
+  attached: boolean
+  // Recent output replayed on re-attach (bounded — see RING_MAX).
+  ringBuffer: string[]
+  ringBufferLen: number
+  // Cleanup hooks invoked by killTerminal / cap-eviction so the onExit
+  // handler doesn't double-process.
+  cleanup?: () => void
 }
+
+// Hard cap. Each pty hosts a Claude subprocess which can balloon to multi-GB
+// over a long conversation. Past versions left orphan sessions on every tab
+// switch, which got us to 40GB. One active session at a time is enforced —
+// switching to a different ticket and starting Claude there evicts the
+// previous session (its progress summary still runs on exit).
+const MAX_CONCURRENT_SESSIONS = 1
+
+// Bounded replay buffer used while a session is detached (renderer not
+// rendering it). 16KB is plenty to recover the bottom of a screen on
+// re-attach without retaining a whole conversation.
+const RING_MAX = 16 * 1024
 
 const sessions = new Map<string, PtySession>()
 
@@ -99,6 +120,24 @@ function resolveCwd(ticketId: string, projectId: string | undefined, repoName: s
   return tmp
 }
 
+// Evict the oldest session if we'd exceed the cap. Used before spawning a
+// new pty so we don't pile up Claude subprocesses across tabs.
+function evictOldestIfAtCap(win: BrowserWindow): void {
+  while (sessions.size >= MAX_CONCURRENT_SESSIONS) {
+    const oldestId = sessions.keys().next().value
+    if (!oldestId) break
+    console.log(`[pty] Concurrent cap hit (${sessions.size}/${MAX_CONCURRENT_SESSIONS}) — evicting oldest session ${oldestId}`)
+    const old = sessions.get(oldestId)
+    try { old?.process.kill() } catch {}
+    // Best-effort notify renderer; onExit will fire and do the rest.
+    if (!win.isDestroyed()) {
+      win.webContents.send('terminal:anyExit', { sessionId: oldestId, code: -1, evicted: true })
+    }
+    // onExit will sessions.delete; do it here too in case kill is silent.
+    sessions.delete(oldestId)
+  }
+}
+
 export async function createTerminal(
   sessionId: string,
   ticketId: string,
@@ -109,6 +148,8 @@ export async function createTerminal(
   rows: number,
   win: BrowserWindow
 ): Promise<void> {
+  evictOldestIfAtCap(win)
+
   const home = process.env.HOME || os.homedir()
   const cwd = resolveCwd(ticketId, projectId, repoName)
 
@@ -133,34 +174,69 @@ export async function createTerminal(
   } catch {}
 
   const sessionStartedAt = Date.now()
-  sessions.set(sessionId, { process: proc, ticketId, cwd, gitStartSha, sessionStartedAt })
+  const session: PtySession = {
+    process: proc,
+    ticketId,
+    cwd,
+    gitStartSha,
+    sessionStartedAt,
+    // Renderer will subscribe and call terminal:attach immediately. Default
+    // true so we don't drop the first few bytes (shell prompt, etc).
+    attached: true,
+    ringBuffer: [],
+    ringBufferLen: 0,
+  }
+  sessions.set(sessionId, session)
 
   // Start a time session for this terminal
   try {
     const db = getDb()
     const tsId = randomUUID()
     db.prepare('INSERT INTO time_sessions (id, ticket_id, started_at) VALUES (?, ?, ?)').run(tsId, ticketId, sessionStartedAt)
-    sessions.get(sessionId)!.timeSessionId = tsId
+    session.timeSessionId = tsId
   } catch {}
 
-  // Batch terminal output — accumulate for 16ms then flush as one IPC message.
-  // Sending every byte individually causes IPC queue to grow unbounded (60GB+).
-  let dataBuffer = ''
+  // Batched IPC. We buffer pty output for up to 16ms (or 64KB) and send as
+  // one message. Sending every byte individually caused IPC queue + cons-
+  // string growth that pushed the app to 40GB RAM.
+  //
+  // Array push + join on flush avoids V8 cons-string chains that the old
+  // `dataBuffer += data` pattern can produce on hot output.
+  const chunks: string[] = []
+  let chunksLen = 0
   let flushTimer: ReturnType<typeof setTimeout> | null = null
-  const MAX_BUFFER = 65536 // force-flush if buffer hits 64KB
+  const MAX_BUFFER = 65536
 
   const flushBuffer = () => {
-    if (dataBuffer && !win.isDestroyed()) {
-      win.webContents.send(`terminal:data:${sessionId}`, dataBuffer)
-      dataBuffer = ''
-    }
     flushTimer = null
+    if (chunksLen === 0) return
+    const out = chunks.join('')
+    chunks.length = 0
+    chunksLen = 0
+    if (win.isDestroyed()) return
+    if (session.attached) {
+      win.webContents.send(`terminal:data:${sessionId}`, out)
+    } else {
+      // Detached — drop into ring buffer for replay on re-attach.
+      session.ringBuffer.push(out)
+      session.ringBufferLen += out.length
+      while (session.ringBufferLen > RING_MAX && session.ringBuffer.length > 1) {
+        const dropped = session.ringBuffer.shift()!
+        session.ringBufferLen -= dropped.length
+      }
+      // Single huge chunk over the cap — truncate.
+      if (session.ringBufferLen > RING_MAX && session.ringBuffer.length === 1) {
+        const only = session.ringBuffer[0]
+        session.ringBuffer[0] = only.slice(only.length - RING_MAX)
+        session.ringBufferLen = session.ringBuffer[0].length
+      }
+    }
   }
 
   proc.onData((data) => {
-    dataBuffer += data
-    if (dataBuffer.length >= MAX_BUFFER) {
-      // Immediate flush when buffer is full
+    chunks.push(data)
+    chunksLen += data.length
+    if (chunksLen >= MAX_BUFFER) {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
       flushBuffer()
     } else if (!flushTimer) {
@@ -168,7 +244,6 @@ export async function createTerminal(
     }
   })
 
-  // Store timer IDs so we can cancel them if terminal is killed early
   const launchTimer = setTimeout(() => {
     if (sessions.has(sessionId)) {
       const cmd = storedSessionId ? `claude --resume ${storedSessionId}\r` : `claude\r`
@@ -183,51 +258,49 @@ export async function createTerminal(
     }
   }, 4000)
 
-  proc.onExit(({ exitCode }) => {
-    const endedAt = Date.now()
-    // Cancel pending timers to avoid orphaned callbacks
+  session.cleanup = () => {
     clearTimeout(launchTimer)
     clearTimeout(detectTimer)
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
-    // Flush any remaining buffered output before exit
-    if (dataBuffer && !win.isDestroyed()) {
-      win.webContents.send(`terminal:data:${sessionId}`, dataBuffer)
-      dataBuffer = ''
-    }
+    // Drop any remaining buffered data — we're tearing down.
+    chunks.length = 0
+    chunksLen = 0
+    session.ringBuffer.length = 0
+    session.ringBufferLen = 0
+  }
 
-    const session = sessions.get(sessionId)
+  proc.onExit(({ exitCode }) => {
+    const endedAt = Date.now()
+    session.cleanup?.()
 
     try {
-      if (session?.timeSessionId) {
+      if (session.timeSessionId) {
         const db = getDb()
         db.prepare('UPDATE time_sessions SET ended_at = ? WHERE id = ?').run(endedAt, session.timeSessionId)
       }
     } catch {}
 
     sessions.delete(sessionId)
-    win.webContents.send(`terminal:exit:${sessionId}`, exitCode)
-
-    // Async: generate progress summary using git diff + ticket context + previous notes
-    if (session) {
-      console.log(`[progress] Starting progress generation for ${ticketId}`)
-      generateAndAppendProgress({
-        ticketId,
-        cwd: session.cwd,
-        gitStartSha: session.gitStartSha ?? null,
-        sessionStartedAt: session.sessionStartedAt,
-        sessionEndedAt: endedAt,
-      })
-        .then((result) => {
-          console.log(`[progress] Result for ${ticketId}:`, result)
-          if (result) {
-            console.log(`[progress] Sending progress:updated event for ${ticketId}`)
-            win.webContents.send('progress:updated', { ticketId, ...result })
-          } else {
-            console.log(`[progress] No result returned (no activity detected)`)
-          }
-        })
-        .catch((err) => console.error('[progress] Progress summary failed:', err))
+    if (!win.isDestroyed()) {
+      win.webContents.send(`terminal:exit:${sessionId}`, exitCode)
+      // Generic broadcast so any tab holding a stale terminalSessionId can clear it.
+      win.webContents.send('terminal:anyExit', { sessionId, code: exitCode, evicted: false })
     }
+
+    console.log(`[progress] Starting progress generation for ${ticketId}`)
+    generateAndAppendProgress({
+      ticketId,
+      cwd: session.cwd,
+      gitStartSha: session.gitStartSha ?? null,
+      sessionStartedAt: session.sessionStartedAt,
+      sessionEndedAt: endedAt,
+    })
+      .then((result) => {
+        if (result && !win.isDestroyed()) {
+          win.webContents.send('progress:updated', { ticketId, ...result })
+        }
+      })
+      .catch((err) => console.error('[progress] Progress summary failed:', err))
   })
 }
 
@@ -244,16 +317,39 @@ export function resizeTerminal(sessionId: string, cols: number, rows: number): v
 export function killTerminal(sessionId: string): void {
   const session = sessions.get(sessionId)
   if (session) {
-    session.process.kill()
-    sessions.delete(sessionId)
+    try { session.process.kill() } catch {}
+    // onExit will clean up; we don't sessions.delete here to avoid a race
+    // where the exit handler sees no session and skips bookkeeping.
   }
 }
 
 export function killAllTerminals(): void {
-  for (const [id, session] of sessions.entries()) {
+  for (const [, session] of sessions.entries()) {
     try { session.process.kill() } catch {}
-    sessions.delete(id)
   }
+  sessions.clear()
+}
+
+// Renderer signalling: pause IPC while the panel is unmounted (e.g. tab
+// switched away) so we don't serialize and queue megabytes of pty output
+// the user can't see. Output goes into a tiny ring buffer instead and is
+// replayed on re-attach.
+export function attachTerminal(sessionId: string, win: BrowserWindow): void {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  session.attached = true
+  if (session.ringBufferLen > 0 && !win.isDestroyed()) {
+    const replay = session.ringBuffer.join('')
+    session.ringBuffer.length = 0
+    session.ringBufferLen = 0
+    win.webContents.send(`terminal:data:${sessionId}`, replay)
+  }
+}
+
+export function detachTerminal(sessionId: string): void {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  session.attached = false
 }
 
 // ============================================================

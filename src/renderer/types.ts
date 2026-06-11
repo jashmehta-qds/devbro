@@ -291,8 +291,11 @@ export interface WindowApi {
     write: (sessionId: string, data: string) => Promise<void>
     resize: (sessionId: string, cols: number, rows: number) => Promise<void>
     kill: (sessionId: string) => Promise<void>
+    attach: (sessionId: string) => Promise<void>
+    detach: (sessionId: string) => Promise<void>
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (code: number) => void) => () => void
+    onAnyExit: (callback: (payload: { sessionId: string; code: number; evicted: boolean }) => void) => () => void
   }
   cache: {
     getProjects: () => Promise<LinearProject[]>

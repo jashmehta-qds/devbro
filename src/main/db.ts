@@ -13,6 +13,25 @@ export function getDb(): Database.Database {
       fs.mkdirSync(userDataPath, { recursive: true })
     }
     const dbPath = path.join(userDataPath, 'dev-dashboard.db')
+
+    // If new DB doesn't exist yet, check for old location (app was renamed dev-dashboard → devbro)
+    // and copy it over so existing notes/data are preserved
+    if (!fs.existsSync(dbPath)) {
+      const oldUserDataPath = path.join(path.dirname(userDataPath), 'dev-dashboard')
+      const oldDbPath = path.join(oldUserDataPath, 'dev-dashboard.db')
+      if (fs.existsSync(oldDbPath)) {
+        try {
+          fs.copyFileSync(oldDbPath, dbPath)
+          // Also copy WAL/SHM if present so we don't lose uncommitted data
+          if (fs.existsSync(oldDbPath + '-wal')) fs.copyFileSync(oldDbPath + '-wal', dbPath + '-wal')
+          if (fs.existsSync(oldDbPath + '-shm')) fs.copyFileSync(oldDbPath + '-shm', dbPath + '-shm')
+          console.log('[db] Migrated database from dev-dashboard to devbro userData')
+        } catch (e) {
+          console.error('[db] Failed to migrate old database:', e)
+        }
+      }
+    }
+
     db = new Database(dbPath)
     db.pragma('journal_mode = WAL')
     db.pragma('foreign_keys = ON')

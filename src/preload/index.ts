@@ -86,6 +86,8 @@ contextBridge.exposeInMainWorld('api', {
     resize: (sessionId: string, cols: number, rows: number) =>
       ipcRenderer.invoke('terminal:resize', sessionId, cols, rows),
     kill: (sessionId: string) => ipcRenderer.invoke('terminal:kill', sessionId),
+    attach: (sessionId: string) => ipcRenderer.invoke('terminal:attach', sessionId),
+    detach: (sessionId: string) => ipcRenderer.invoke('terminal:detach', sessionId),
 
     onData: (sessionId: string, callback: (data: string) => void) => {
       const channel = `terminal:data:${sessionId}`
@@ -99,6 +101,12 @@ contextBridge.exposeInMainWorld('api', {
       const listener = (_event: any, code: number) => callback(code)
       ipcRenderer.on(channel, listener)
       return () => ipcRenderer.removeListener(channel, listener)
+    },
+
+    onAnyExit: (callback: (payload: { sessionId: string; code: number; evicted: boolean }) => void) => {
+      const listener = (_event: any, payload: any) => callback(payload)
+      ipcRenderer.on('terminal:anyExit', listener)
+      return () => ipcRenderer.removeListener('terminal:anyExit', listener)
     }
   },
 

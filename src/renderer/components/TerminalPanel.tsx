@@ -149,10 +149,16 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
 
   useEffect(() => {
     if (terminalSessionId && terminalRef.current) {
+      // Tell main we're rendering this session — pty output streams via IPC.
+      // While detached, main drops output into a small ring buffer instead.
+      window.api.terminal.attach(terminalSessionId).catch(() => {})
       const unsub = window.api.terminal.onData(terminalSessionId, (data) => {
         terminalRef.current?.write(data)
       })
-      return unsub
+      return () => {
+        unsub()
+        window.api.terminal.detach(terminalSessionId).catch(() => {})
+      }
     }
   }, [terminalSessionId])
 

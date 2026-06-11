@@ -8,6 +8,8 @@ import {
   writeToTerminal,
   resizeTerminal,
   killTerminal,
+  attachTerminal,
+  detachTerminal,
   buildContextContent,
   getSessionCwd
 } from './pty'
@@ -597,6 +599,16 @@ Rules for newPercent:
 
   ipcMain.handle('terminal:kill', async (_event, sessionId: string) => {
     killTerminal(sessionId)
+  })
+
+  ipcMain.handle('terminal:attach', async (_event, sessionId: string) => {
+    if (typeof sessionId !== 'string') return
+    attachTerminal(sessionId, win)
+  })
+
+  ipcMain.handle('terminal:detach', async (_event, sessionId: string) => {
+    if (typeof sessionId !== 'string') return
+    detachTerminal(sessionId)
   })
 
   // ============================================================
