@@ -1,4 +1,4 @@
-import type { Connector, ConnectorIssue, ConnectorProject, ConnectorProjectDetails, ConnectorState } from './types'
+import type { Connector, ConnectorIssue, ConnectorProject, ConnectorProjectDetails, ConnectorState, ConnectorCycle } from './types'
 import {
   fetchProjects as _fetchProjects,
   fetchIssues as _fetchIssues,
@@ -6,6 +6,7 @@ import {
   fetchIssueStates as _fetchIssueStates,
   fetchProjectDetails as _fetchProjectDetails,
   updateIssueState as _updateIssueState,
+  fetchTeamCycles as _fetchTeamCycles,
 } from '../linear'
 
 interface LinearConfig {
@@ -53,6 +54,10 @@ export class LinearConnector implements Connector {
 
   async updateIssueState(issueId: string, stateId: string): Promise<void> {
     return _updateIssueState(issueId, stateId)
+  }
+
+  async fetchCycles(): Promise<ConnectorCycle[]> {
+    return _fetchTeamCycles()
   }
 
   async testConnection(): Promise<{ ok: boolean; message: string }> {

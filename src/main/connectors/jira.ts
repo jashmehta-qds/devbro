@@ -1,4 +1,4 @@
-import type { Connector, ConnectorIssue, ConnectorProject, ConnectorProjectDetails, ConnectorState } from './types'
+import type { Connector, ConnectorIssue, ConnectorProject, ConnectorProjectDetails, ConnectorState, ConnectorCycle } from './types'
 
 interface JiraConfig {
   api_key: string
@@ -169,6 +169,10 @@ export class JiraConnector implements Connector {
       method: 'POST',
       body: JSON.stringify({ transition: { id: stateId } }),
     })
+  }
+
+  async fetchCycles(): Promise<ConnectorCycle[]> {
+    return []
   }
 
   async testConnection(): Promise<{ ok: boolean; message: string }> {

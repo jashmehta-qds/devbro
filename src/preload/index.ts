@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('api', {
     getIssueStates: (issueId: string) => ipcRenderer.invoke('linear:getIssueStates', issueId),
     updateStatus: (issueId: string, stateId: string, fromStateName: string, toStateName: string) =>
       ipcRenderer.invoke('linear:updateStatus', issueId, stateId, fromStateName, toStateName),
+    getCycles: () => ipcRenderer.invoke('linear:getCycles'),
     onIssueUpdated: (callback: (issue: any) => void) => {
       const listener = (_event: any, issue: any) => callback(issue)
       ipcRenderer.on('linear:issueUpdated', listener)
@@ -172,5 +173,18 @@ contextBridge.exposeInMainWorld('api', {
   appConfig: {
     get: (key: string) => ipcRenderer.invoke('appConfig:get', key),
     set: (key: string, value: string) => ipcRenderer.invoke('appConfig:set', key, value),
+  },
+
+  memory: {
+    onWarn: (callback: (payload: { totalMB: number; limitMB: number }) => void) => {
+      const listener = (_event: any, payload: any) => callback(payload)
+      ipcRenderer.on('app:memoryWarn', listener)
+      return () => ipcRenderer.removeListener('app:memoryWarn', listener)
+    },
+    onKill: (callback: (payload: { totalMB: number; limitMB: number }) => void) => {
+      const listener = (_event: any, payload: any) => callback(payload)
+      ipcRenderer.on('app:memoryKill', listener)
+      return () => ipcRenderer.removeListener('app:memoryKill', listener)
+    },
   },
 })

@@ -211,6 +211,17 @@ export default function App() {
     return () => { unsubscribe() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Memory watchdog notifications — warn at 80%, force-quit at 100% of cap.
+  useEffect(() => {
+    const unWarn = window.api.memory.onWarn(({ totalMB, limitMB }) => {
+      addNotificationRef.current(`⚠ Memory ${(totalMB / 1024).toFixed(1)}GB / ${(limitMB / 1024).toFixed(0)}GB — close idle tabs`)
+    })
+    const unKill = window.api.memory.onKill(({ totalMB, limitMB }) => {
+      addNotificationRef.current(`Memory limit hit (${(totalMB / 1024).toFixed(1)}GB ≥ ${(limitMB / 1024).toFixed(0)}GB) — shutting down`)
+    })
+    return () => { unWarn(); unKill() }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Clear stale terminalSessionId from any tab whose pty just exited —
   // typically because the concurrent-sessions cap evicted it when a new
   // session started on a different tab. Without this, the old tab would

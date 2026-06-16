@@ -1,4 +1,5 @@
 import { LinearClient } from '@linear/sdk'
+import type { ConnectorCycle } from './connectors/types'
 
 let client: LinearClient | null = null
 let clientCreatedAt = 0
@@ -25,6 +26,11 @@ async function serializeIssue(issue: any, projectOverride?: { id: string; name: 
   const project = projectOverride ?? (await issue.project ? { id: (await issue.project).id, name: (await issue.project).name, description: (await issue.project).description ?? undefined } : undefined)
   const labels = await issue.labels()
 
+  let cycleId: string | null = null
+  let milestoneId: string | null = null
+  try { const cycle = await issue.cycle; cycleId = cycle?.id ?? null } catch {}
+  try { const milestone = await issue.projectMilestone; milestoneId = milestone?.id ?? null } catch {}
+
   return {
     id: issue.id,
     identifier: issue.identifier,
@@ -42,7 +48,9 @@ async function serializeIssue(issue: any, projectOverride?: { id: string; name: 
     createdAt: issue.createdAt.toISOString(),
     updatedAt: issue.updatedAt.toISOString(),
     url: issue.url,
-    labels: labels.nodes.map((l: any) => ({ id: l.id, name: l.name, color: l.color }))
+    labels: labels.nodes.map((l: any) => ({ id: l.id, name: l.name, color: l.color })),
+    cycleId,
+    milestoneId,
   }
 }
 
@@ -176,6 +184,47 @@ export async function fetchProjectDetails(projectId: string) {
     totalIssues: issuesConn.nodes.length,
     milestones,
   }
+}
+
+export async function fetchTeamCycles(): Promise<ConnectorCycle[]> {
+  const c = getLinearClient()
+  const teamId = process.env.LINEAR_TEAM_ID
+
+  let teamNodes: any[] = []
+  if (teamId) {
+    try { teamNodes = [await c.team(teamId)] } catch {}
+  }
+  if (teamNodes.length === 0) {
+    try {
+      const me = await c.viewer
+      const conn = await me.teams()
+      teamNodes = conn.nodes
+    } catch {}
+  }
+
+  const now = new Date()
+  const cycles: ConnectorCycle[] = []
+
+  for (const team of teamNodes) {
+    try {
+      const conn = await team.cycles({ first: 20, filter: { completedAt: { null: true } } })
+      for (const cy of conn.nodes) {
+        const start = new Date(cy.startsAt)
+        const end = new Date(cy.endsAt)
+        cycles.push({
+          id: cy.id,
+          number: cy.number,
+          name: cy.name ?? null,
+          isCurrent: start <= now && now <= end,
+          isNext: start > now,
+          startsAt: cy.startsAt.toISOString(),
+          endsAt: cy.endsAt.toISOString(),
+        })
+      }
+    } catch {}
+  }
+
+  return cycles
 }
 
 export async function fetchIssue(issueId: string) {

@@ -80,6 +80,12 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     return getActiveConnector().fetchIssueStates(issueId)
   })
 
+  ipcMain.handle('linear:getCycles', async () => {
+    const connector = getActiveConnector()
+    if (!connector.fetchCycles) return []
+    return connector.fetchCycles()
+  })
+
   ipcMain.handle('linear:updateStatus', async (_event, issueId: string, stateId: string, fromStateName: string, toStateName: string) => {
     if (typeof issueId !== 'string' || typeof stateId !== 'string') throw new Error('Invalid args')
     await getActiveConnector().updateIssueState(issueId, stateId)

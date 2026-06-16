@@ -9,6 +9,16 @@ export interface LinearProject {
   targetDate?: string | null
 }
 
+export interface LinearCycle {
+  id: string
+  number: number
+  name: string | null
+  isCurrent: boolean
+  isNext: boolean
+  startsAt: string
+  endsAt: string
+}
+
 export interface LinearIssue {
   id: string
   identifier: string
@@ -46,6 +56,8 @@ export interface LinearIssue {
     name: string
     color: string
   }>
+  cycleId?: string | null
+  milestoneId?: string | null
 }
 
 export interface Note {
@@ -241,6 +253,7 @@ export interface WindowApi {
     getIssue: (issueId: string) => Promise<LinearIssue>
     getIssueStates: (issueId: string) => Promise<IssueState[]>
     updateStatus: (issueId: string, stateId: string, fromStateName: string, toStateName: string) => Promise<void>
+    getCycles: () => Promise<LinearCycle[]>
     onIssueUpdated: (callback: (issue: LinearIssue) => void) => () => void
   }
   tabs: {
@@ -296,6 +309,10 @@ export interface WindowApi {
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (code: number) => void) => () => void
     onAnyExit: (callback: (payload: { sessionId: string; code: number; evicted: boolean }) => void) => () => void
+  }
+  memory: {
+    onWarn: (callback: (payload: { totalMB: number; limitMB: number }) => void) => () => void
+    onKill: (callback: (payload: { totalMB: number; limitMB: number }) => void) => () => void
   }
   cache: {
     getProjects: () => Promise<LinearProject[]>

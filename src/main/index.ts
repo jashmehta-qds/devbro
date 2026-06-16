@@ -6,6 +6,7 @@ import { registerIpcHandlers } from './ipc'
 import { getDb } from './db'
 import { killAllTerminals } from './pty'
 import { writeGlobalConfigFile } from './configLog'
+import { startMemoryWatchdog, stopMemoryWatchdog } from './memoryWatchdog'
 
 // Load .env file
 dotenv.config({ path: path.join(__dirname, '../../.env') })
@@ -63,6 +64,11 @@ app.whenReady().then(() => {
   mainWindow = createWindow()
   registerIpcHandlers(mainWindow)
 
+  // Memory circuit breaker — force-quit if total RSS exceeds the cap
+  // (default 12GB). Override with DEVBRO_MEM_LIMIT_MB env var.
+  const envLimit = parseInt(process.env.DEVBRO_MEM_LIMIT_MB || '', 10)
+  startMemoryWatchdog(mainWindow, Number.isFinite(envLimit) && envLimit > 0 ? envLimit : undefined)
+
   // Window control handlers
   // Refresh global context file on demand
   ipcMain.handle('context:refresh', () => {
@@ -85,6 +91,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   killAllTerminals()
+  stopMemoryWatchdog()
   if (process.platform !== 'darwin') {
     app.quit()
   }
@@ -92,4 +99,5 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   killAllTerminals()
+  stopMemoryWatchdog()
 })

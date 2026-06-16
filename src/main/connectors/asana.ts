@@ -1,4 +1,4 @@
-import type { Connector, ConnectorIssue, ConnectorProject, ConnectorProjectDetails, ConnectorState } from './types'
+import type { Connector, ConnectorIssue, ConnectorProject, ConnectorProjectDetails, ConnectorState, ConnectorCycle } from './types'
 
 interface AsanaConfig {
   personal_access_token: string
@@ -172,6 +172,10 @@ export class AsanaConnector implements Connector {
       method: 'PUT',
       body: JSON.stringify({ data: { completed: stateId === 'completed' } }),
     })
+  }
+
+  async fetchCycles(): Promise<ConnectorCycle[]> {
+    return []
   }
 
   async testConnection(): Promise<{ ok: boolean; message: string }> {

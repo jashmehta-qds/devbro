@@ -13,6 +13,18 @@ export interface ConnectorIssue {
   updatedAt: string
   url: string
   labels?: Array<{ id: string; name: string; color: string }>
+  cycleId?: string | null
+  milestoneId?: string | null
+}
+
+export interface ConnectorCycle {
+  id: string
+  number: number
+  name: string | null
+  isCurrent: boolean
+  isNext: boolean
+  startsAt: string
+  endsAt: string
 }
 
 export interface ConnectorProject {
@@ -59,4 +71,5 @@ export interface Connector {
   fetchProjectDetails(projectId: string): Promise<ConnectorProjectDetails>
   updateIssueState(issueId: string, stateId: string): Promise<void>
   testConnection(): Promise<{ ok: boolean; message: string }>
+  fetchCycles?(): Promise<ConnectorCycle[]>
 }
