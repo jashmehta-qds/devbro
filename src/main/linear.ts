@@ -26,8 +26,8 @@ async function serializeIssue(issue: any, projectOverride?: { id: string; name: 
     issue.assignee,
     projectOverride ? Promise.resolve(null) : issue.project,
     issue.labels(),
-    issue.cycle.catch(() => null),
-    issue.projectMilestone.catch(() => null),
+    Promise.resolve(issue.cycle).catch(() => null),
+    Promise.resolve(issue.projectMilestone).catch(() => null),
   ])
 
   const project = projectOverride ?? (projectRaw ? { id: projectRaw.id, name: projectRaw.name, description: projectRaw.description ?? undefined } : undefined)

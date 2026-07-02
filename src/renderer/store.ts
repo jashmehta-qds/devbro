@@ -117,13 +117,14 @@ interface AppState {
   terminalSessionId: string | null
 
   // Project tabs (separate from issue tabs) — also used for Settings/Dashboard tabs
-  projectTabs: Array<{ id: string; name: string; color?: string; tabType?: 'project' | 'settings' | 'dashboard' }>
+  projectTabs: Array<{ id: string; name: string; color?: string; tabType?: 'project' | 'settings' | 'dashboard' | 'help' }>
   activeProjectTabId: string | null
   openProjectTab: (project: import('./types').LinearProject) => void
   closeProjectTab: (projectId: string) => void
   focusProjectTab: (projectId: string) => void
   openSettingsTab: () => void
   openDashboardTab: () => void
+  openHelpTab: () => void
 
   // UI state
   loading: boolean
@@ -133,6 +134,7 @@ interface AppState {
   commandPaletteOpen: boolean
   settingsOpen: boolean
   dashboardOpen: boolean
+  helpOpen: boolean
   standupOpen: boolean
   activeProjectId: string | null
   projectDetails: Record<string, ProjectDetails>
@@ -212,26 +214,28 @@ export const useAppStore = create<AppState>()((set, get) => ({
   openProjectTab: (project) =>
     set((state) => {
       const exists = state.projectTabs.find((t) => t.id === project.id)
-      if (exists) return { activeProjectTabId: project.id, activeProjectId: project.id, settingsOpen: false, dashboardOpen: false }
+      if (exists) return { activeProjectTabId: project.id, activeProjectId: project.id, settingsOpen: false, dashboardOpen: false, helpOpen: false }
       return {
         projectTabs: [...state.projectTabs, { id: project.id, name: project.name, color: project.color, tabType: 'project' as const }],
         activeProjectTabId: project.id,
         activeProjectId: project.id,
         settingsOpen: false,
         dashboardOpen: false,
+        helpOpen: false,
       }
     }),
 
   openSettingsTab: () =>
     set((state) => {
       const exists = state.projectTabs.find((t) => t.id === '__settings__')
-      if (exists) return { activeTabId: null, activeProjectTabId: '__settings__', settingsOpen: true, dashboardOpen: false, activeProjectId: null }
+      if (exists) return { activeTabId: null, activeProjectTabId: '__settings__', settingsOpen: true, dashboardOpen: false, helpOpen: false, activeProjectId: null }
       return {
         projectTabs: [...state.projectTabs, { id: '__settings__', name: 'Settings', tabType: 'settings' as const }],
         activeTabId: null,
         activeProjectTabId: '__settings__',
         settingsOpen: true,
         dashboardOpen: false,
+        helpOpen: false,
         activeProjectId: null,
       }
     }),
@@ -239,13 +243,29 @@ export const useAppStore = create<AppState>()((set, get) => ({
   openDashboardTab: () =>
     set((state) => {
       const exists = state.projectTabs.find((t) => t.id === '__dashboard__')
-      if (exists) return { activeTabId: null, activeProjectTabId: '__dashboard__', dashboardOpen: true, settingsOpen: false, activeProjectId: null }
+      if (exists) return { activeTabId: null, activeProjectTabId: '__dashboard__', dashboardOpen: true, settingsOpen: false, helpOpen: false, activeProjectId: null }
       return {
         projectTabs: [...state.projectTabs, { id: '__dashboard__', name: 'Analytics', tabType: 'dashboard' as const }],
         activeTabId: null,
         activeProjectTabId: '__dashboard__',
         dashboardOpen: true,
         settingsOpen: false,
+        helpOpen: false,
+        activeProjectId: null,
+      }
+    }),
+
+  openHelpTab: () =>
+    set((state) => {
+      const exists = state.projectTabs.find((t) => t.id === '__help__')
+      if (exists) return { activeTabId: null, activeProjectTabId: '__help__', helpOpen: true, settingsOpen: false, dashboardOpen: false, activeProjectId: null }
+      return {
+        projectTabs: [...state.projectTabs, { id: '__help__', name: 'Help', tabType: 'help' as const }],
+        activeTabId: null,
+        activeProjectTabId: '__help__',
+        helpOpen: true,
+        settingsOpen: false,
+        dashboardOpen: false,
         activeProjectId: null,
       }
     }),
@@ -265,6 +285,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         activeProjectId: nextTab?.tabType === 'project' ? newActiveProjectTabId : null,
         settingsOpen: nextTab?.tabType === 'settings' ? true : closingTab?.tabType === 'settings' ? false : state.settingsOpen,
         dashboardOpen: nextTab?.tabType === 'dashboard' ? true : closingTab?.tabType === 'dashboard' ? false : state.dashboardOpen,
+        helpOpen: nextTab?.tabType === 'help' ? true : closingTab?.tabType === 'help' ? false : state.helpOpen,
       }
     }),
 
@@ -277,6 +298,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         activeProjectId: tab?.tabType === 'project' ? projectId : null,
         settingsOpen: tab?.tabType === 'settings',
         dashboardOpen: tab?.tabType === 'dashboard',
+        helpOpen: tab?.tabType === 'help',
       }
     }),
 
@@ -287,6 +309,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   commandPaletteOpen: false,
   settingsOpen: false,
   dashboardOpen: false,
+  helpOpen: false,
   standupOpen: false,
   activeProjectId: null,
   projectDetails: {},
@@ -332,7 +355,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       const existing = state.tabs.find((t) => t.id === issue.id)
       if (existing) {
         saveTabs(state.tabs, issue.id)
-        return { activeTabId: issue.id, activeProjectTabId: null, settingsOpen: false, dashboardOpen: false, activeProjectId: null, ...derived(state.tabs, issue.id) }
+        return { activeTabId: issue.id, activeProjectTabId: null, settingsOpen: false, dashboardOpen: false, helpOpen: false, activeProjectId: null, ...derived(state.tabs, issue.id) }
       }
       if (state.tabs.length >= MAX_TABS) return {}
       const newTab: IssueTab = {
@@ -341,7 +364,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       }
       const newTabs = [...state.tabs, newTab]
       saveTabs(newTabs, issue.id)
-      return { tabs: newTabs, activeTabId: issue.id, activeProjectTabId: null, settingsOpen: false, dashboardOpen: false, activeProjectId: null, ...derived(newTabs, issue.id) }
+      return { tabs: newTabs, activeTabId: issue.id, activeProjectTabId: null, settingsOpen: false, dashboardOpen: false, helpOpen: false, activeProjectId: null, ...derived(newTabs, issue.id) }
     })
     get().addRecentIssue(issue.id)
   },
@@ -369,7 +392,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   focusTab: (issueId) =>
     set((state) => {
       saveTabs(state.tabs, issueId)
-      return { activeTabId: issueId, activeProjectTabId: null, settingsOpen: false, dashboardOpen: false, activeProjectId: null, ...derived(state.tabs, issueId) }
+      return { activeTabId: issueId, activeProjectTabId: null, settingsOpen: false, dashboardOpen: false, helpOpen: false, activeProjectId: null, ...derived(state.tabs, issueId) }
     }),
 
   updateTab: (issueId, patch) =>
@@ -400,7 +423,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setTicketBranch: (ticketId, branch) => set((state) => ({ ticketBranches: { ...state.ticketBranches, [ticketId]: branch } })),
   setSettingsOpen: (open) => { if (open) get().openSettingsTab(); else get().closeProjectTab('__settings__') },
   setDashboardOpen: (open) => { if (open) get().openDashboardTab(); else get().closeProjectTab('__dashboard__') },
-  setActiveProjectId: (id) => set({ activeProjectId: id, activeProjectTabId: id, dashboardOpen: false, settingsOpen: false }),
+  setActiveProjectId: (id) => set({ activeProjectId: id, activeProjectTabId: id, dashboardOpen: false, settingsOpen: false, helpOpen: false }),
   setProjectDetails: (projectId, details) => set((state) => ({ projectDetails: { ...state.projectDetails, [projectId]: details } })),
   addRecentIssue: (id) => set((state) => {
     const next = [id, ...state.recentIssueIds.filter((x) => x !== id)].slice(0, MAX_RECENT)

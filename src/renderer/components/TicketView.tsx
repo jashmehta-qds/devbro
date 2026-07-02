@@ -129,7 +129,7 @@ function InlineNotes({ ticketId }: { ticketId: string }) {
 }
 
 
-type SecondaryTab = 'checklist' | 'skills' | 'diff' | 'activity'
+type SecondaryTab = 'notes' | 'checklist' | 'skills' | 'diff' | 'activity'
 
 const PRIORITY_COLORS: Record<number, string> = {
   1: 'text-red-300 bg-red-500/10 border-red-500/20',
@@ -168,7 +168,7 @@ export function TicketView() {
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const [gitInfo, setGitInfo] = useState<GitBranchInfo | null>(null)
-  const [secondaryTab, setSecondaryTab] = useState<SecondaryTab>('checklist')
+  const [secondaryTab, setSecondaryTab] = useState<SecondaryTab>('notes')
 
   useEffect(() => {
     if (selectedIssue) {
@@ -254,10 +254,8 @@ export function TicketView() {
 
 
   const [projectRepos, setProjectRepos] = useState<string[]>([])
-  const [availableDirs, setAvailableDirs] = useState<string[]>([])
-  const [pickRepo, setPickRepo] = useState('')
 
-  const reposKey = selectedIssue?.project?.id ?? selectedIssue?.id ?? null
+  const reposKey = selectedIssue?.project?.id ?? (selectedIssue ? '__no_project__' : null)
 
   useEffect(() => {
     if (reposKey) {
@@ -287,18 +285,6 @@ export function TicketView() {
       setGitInfo(null)
     }
   }, [reposKey])
-
-  useEffect(() => {
-    if (!selectedIssue || selectedIssue.project?.id || projectRepos.length > 0) return
-    window.api.repos.list().then((dirs: string[]) => setAvailableDirs(dirs)).catch(() => setAvailableDirs([]))
-  }, [selectedIssue?.id, selectedIssue?.project?.id, projectRepos.length])
-
-  const handleLinkTicketRepo = async () => {
-    if (!selectedIssue || !pickRepo) return
-    await window.api.projectRepos.add(selectedIssue.id, pickRepo)
-    setProjectRepos([pickRepo])
-    setPickRepo('')
-  }
 
   useEffect(() => {
     if (!terminalOpen || projectRepos.length === 0) return
@@ -442,6 +428,50 @@ export function TicketView() {
                 ))}
               </div>
             )}
+
+            {/* Branch inline */}
+            <div className="flex items-center gap-1.5 pl-2 ml-1 border-l border-gray-800">
+              {branchEditing ? (
+                <>
+                  <input
+                    type="text"
+                    value={branchInput}
+                    onChange={(e) => setBranchInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleBranchSave(); if (e.key === 'Escape') setBranchEditing(false) }}
+                    autoFocus
+                    placeholder="feature/my-branch"
+                    className="bg-transparent border-b border-gray-800 focus:border-gray-600 text-[11px] font-mono text-gray-200 px-1 h-5 outline-none w-44"
+                  />
+                  <button onClick={handleBranchSave} className="text-[10px] text-violet-400 hover:text-violet-300">{branchSaved ? '✓' : 'save'}</button>
+                  <button onClick={() => setBranchEditing(false)} className="text-[10px] text-gray-600 hover:text-gray-400">✕</button>
+                </>
+              ) : (
+                <button onClick={() => setBranchEditing(true)} title="Click to edit branch"
+                  className="text-[11px] font-mono text-gray-300 hover:text-gray-100 transition-colors"
+                >
+                  {branchInput || <span className="text-gray-600 italic">no branch</span>}
+                </button>
+              )}
+              {branchInput && !branchEditing && (
+                <button
+                  onClick={() => { navigator.clipboard.writeText(branchInput); setBranchCopied(true); setTimeout(() => setBranchCopied(false), 1500) }}
+                  className="text-gray-500 hover:text-gray-300 transition-colors"
+                  title="Copy branch"
+                >
+                  {branchCopied
+                    ? <svg className="w-3 h-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                    : <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                  }
+                </button>
+              )}
+              {gitInfo && (
+                <>
+                  {gitInfo.aheadBy > 0 && <span className="text-[10px] font-mono text-emerald-400" title={`${gitInfo.aheadBy} ahead`}>↑{gitInfo.aheadBy}</span>}
+                  {gitInfo.behindBy > 0 && <span className="text-[10px] font-mono text-orange-400" title={`${gitInfo.behindBy} behind`}>↓{gitInfo.behindBy}</span>}
+                  {gitInfo.isDirty && <span className="text-[10px] font-mono text-gray-400" title="Uncommitted changes">● dirty</span>}
+                </>
+              )}
+            </div>
           </div>
 
           <div className="ml-auto flex items-center gap-1.5 flex-wrap">
@@ -461,18 +491,6 @@ export function TicketView() {
                   {repo}
                 </button>
               ))
-            ) : projectRepos.length === 0 && !selectedIssue.project?.id && availableDirs.length > 0 ? (
-              <>
-                <select value={pickRepo} onChange={e => setPickRepo(e.target.value)}
-                  className="bg-gray-900 border border-gray-800 rounded-md px-2 h-7 text-xs text-gray-300 focus:outline-none focus:border-gray-600 transition-colors"
-                >
-                  <option value="">Set working dir…</option>
-                  {availableDirs.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-                <button onClick={handleLinkTicketRepo} disabled={!pickRepo}
-                  className="inline-flex items-center h-7 px-3 rounded-md text-xs font-medium bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white transition-colors shadow-soft"
-                >Link</button>
-              </>
             ) : projectRepos.length === 1 ? (
               <button onClick={() => handleOpenTerminal(projectRepos[0])}
                 className={`inline-flex items-center gap-1.5 h-7 px-3 rounded-md text-xs font-medium transition-colors ${
@@ -490,93 +508,22 @@ export function TicketView() {
           </div>
         </div>
 
-        {/* Title */}
-        <h2 className="text-2xl font-semibold text-gray-50 tracking-[-0.01em] leading-tight mt-3 max-w-3xl">
-          {selectedIssue.title}
-        </h2>
-
-        {/* Progress bar */}
-        <div className="mt-5 flex items-center gap-3">
-          <div className="flex-1 h-0.5 bg-gray-800 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-300 ${
-                progressPercent === 100 ? 'bg-green-500' : progressPercent > 0 ? 'bg-violet-500' : 'bg-gray-700'
-              }`}
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
-          <span className="text-[10px] text-gray-500 font-mono flex-shrink-0">{progressPercent}%</span>
-        </div>
-
-        {/* Branch + git chips */}
-        <div className="mt-4 flex items-center gap-2 flex-wrap">
-          <span className="text-[11px] text-gray-500 uppercase tracking-wider">branch</span>
-
-          {branchEditing ? (
-            <>
-              <input
-                type="text"
-                value={branchInput}
-                onChange={(e) => setBranchInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleBranchSave(); if (e.key === 'Escape') setBranchEditing(false) }}
-                autoFocus
-                placeholder="feature/my-branch"
-                className="bg-transparent border-0 border-b border-gray-800 focus:border-gray-600 text-xs font-mono text-gray-200 px-1 h-6 outline-none transition-colors w-56"
+        {/* Title + progress bar */}
+        <div className="flex items-center gap-4 mt-3">
+          <h2 className="text-2xl font-semibold text-gray-50 tracking-[-0.01em] leading-tight flex-1 min-w-0 truncate">
+            {selectedIssue.title}
+          </h2>
+          <div className="flex items-center gap-2 w-[100px] flex-shrink-0">
+            <div className="flex-1 h-0.5 bg-gray-800 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-300 ${
+                  progressPercent === 100 ? 'bg-emerald-500' : progressPercent > 0 ? 'bg-violet-500' : 'bg-gray-700'
+                }`}
+                style={{ width: `${progressPercent}%` }}
               />
-              <button onClick={handleBranchSave}
-                className="inline-flex items-center h-6 px-2 rounded-md bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors"
-              >{branchSaved ? 'Saved!' : 'Save'}</button>
-              <button onClick={() => setBranchEditing(false)}
-                className="text-gray-500 hover:text-gray-300 h-7 px-2 rounded-md text-xs hover:bg-gray-900 transition-colors"
-              >✕</button>
-            </>
-          ) : (
-            <button onClick={() => setBranchEditing(true)}
-              className="text-xs font-mono text-gray-200 hover:text-gray-50 transition-colors"
-              title="Click to edit branch"
-            >
-              {branchInput || <span className="text-gray-600 italic">no branch</span>}
-            </button>
-          )}
-
-          {branchInput && !branchEditing && (
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(branchInput)
-                setBranchCopied(true)
-                setTimeout(() => setBranchCopied(false), 1500)
-              }}
-              className="text-gray-500 hover:text-gray-300 transition-colors p-1"
-              title="Copy branch name"
-            >
-              {branchCopied
-                ? <svg className="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                : <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-              }
-            </button>
-          )}
-
-          {/* ponytail: PR status when GitHub connector lands */}
-
-          {gitInfo && (
-            <div className="flex items-center gap-1">
-              {gitInfo.aheadBy > 0 && (
-                <span className="inline-flex items-center gap-1 h-5 px-1.5 rounded bg-gray-900 border border-gray-800 text-[10px] font-mono text-green-400" title={`${gitInfo.aheadBy} commit(s) ahead`}>
-                  ↑{gitInfo.aheadBy}
-                </span>
-              )}
-              {gitInfo.behindBy > 0 && (
-                <span className="inline-flex items-center gap-1 h-5 px-1.5 rounded bg-gray-900 border border-gray-800 text-[10px] font-mono text-orange-400" title={`${gitInfo.behindBy} commit(s) behind`}>
-                  ↓{gitInfo.behindBy}
-                </span>
-              )}
-              {gitInfo.isDirty && (
-                <span className="inline-flex items-center gap-1 h-5 px-1.5 rounded bg-gray-900 border border-gray-800 text-[10px] font-mono text-gray-400" title="Uncommitted changes">
-                  ● dirty
-                </span>
-              )}
             </div>
-          )}
+            <span className="text-[10px] text-gray-500 font-mono">{progressPercent}%</span>
+          </div>
         </div>
       </div>
 
@@ -613,42 +560,60 @@ export function TicketView() {
           </div>
         </div>
 
-        {/* Right: inline notes editor */}
+        {/* Right: switchable pane (notes / checklist / skills / diff / activity) */}
         <div className="overflow-y-auto pl-4 pr-8 py-6 border-l border-gray-800 flex flex-col min-h-0">
+          <div className="flex items-center gap-1 mb-4 flex-shrink-0">
+            {SECONDARY_TABS.map((t) => (
+              <SecondaryTabPill
+                key={t.id}
+                active={secondaryTab === t.id}
+                onClick={() => setSecondaryTab(t.id)}
+                label={t.label}
+                icon={t.icon}
+              />
+            ))}
+          </div>
           <div className="flex-1 min-h-0">
-            <InlineNotes ticketId={selectedIssue.id} />
+            {secondaryTab === 'notes' && <InlineNotes ticketId={selectedIssue.id} />}
+            {secondaryTab === 'checklist' && <ChecklistWidget ticketId={selectedIssue.id} />}
+            {secondaryTab === 'skills' && <SkillsTab ticketId={selectedIssue.id} />}
+            {secondaryTab === 'diff' && <p className="text-gray-500 text-sm">Diff viewer coming soon</p>}
+            {secondaryTab === 'activity' && <p className="text-gray-500 text-sm">Activity timeline coming soon</p>}
           </div>
         </div>
       </div>
-
-      {/* Secondary tab bar */}
-      <div className="border-t border-gray-800 bg-gray-900 flex-shrink-0">
-        <div className="flex items-center gap-1 px-4 pt-2 border-b border-gray-800">
-          {(['checklist', 'skills', 'diff', 'activity'] as SecondaryTab[]).map((t) => (
-            <button key={t} onClick={() => setSecondaryTab(t)}
-              className={`h-8 px-3 text-xs transition-colors relative rounded-t-md capitalize ${
-                secondaryTab === t ? 'text-gray-50' : 'text-gray-400 hover:text-gray-100'
-              }`}
-            >
-              {t}
-              {secondaryTab === t && (
-                <span className="absolute -bottom-px left-0 right-0 h-0.5 bg-violet-500 rounded-full" />
-              )}
-            </button>
-          ))}
-        </div>
-
-        <div className="p-4 max-h-64 overflow-y-auto">
-          {secondaryTab === 'checklist' && <ChecklistWidget ticketId={selectedIssue.id} />}
-          {secondaryTab === 'skills' && <SkillsTab ticketId={selectedIssue.id} />}
-          {secondaryTab === 'diff' && (
-            <p className="text-gray-500 text-sm">Diff viewer coming soon</p>
-          )}
-          {secondaryTab === 'activity' && (
-            <p className="text-gray-500 text-sm">Activity timeline coming soon</p>
-          )}
-        </div>
-      </div>
     </div>
+  )
+}
+
+const SECONDARY_TABS: { id: SecondaryTab; label: string; icon: React.ReactNode }[] = [
+  { id: 'notes',     label: 'Notes',     icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg> },
+  { id: 'checklist', label: 'Checklist', icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg> },
+  { id: 'skills',    label: 'Skills',    icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.5 6L21 11l-5.5 2L13 19l-2.5-6L5 11l5.5-2L13 3z" /></svg> },
+  { id: 'diff',      label: 'Diff',      icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m-12 5h12m-12 5h12M4 7h.01M4 12h.01M4 17h.01" /></svg> },
+  { id: 'activity',  label: 'Activity',  icon: <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+]
+
+function SecondaryTabPill({ active, onClick, label, icon }: { active: boolean; onClick: () => void; label: string; icon: React.ReactNode }) {
+  const [hover, setHover] = useState(false)
+  const expanded = active || hover
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={label}
+      style={{ width: expanded ? 108 : 30 }}
+      className={`relative flex items-center h-7 rounded-md overflow-hidden transition-[width,background-color,color] duration-200 ease-out-quart flex-shrink-0 ${
+        active
+          ? 'bg-violet-500/10 text-violet-300'
+          : hover
+          ? 'text-gray-100 bg-gray-850'
+          : 'text-gray-500'
+      }`}
+    >
+      <span className="flex items-center justify-center w-[30px] h-7 flex-shrink-0">{icon}</span>
+      <span className={`text-[11px] font-medium whitespace-nowrap transition-opacity duration-150 ${expanded ? 'opacity-100' : 'opacity-0'}`}>{label}</span>
+    </button>
   )
 }

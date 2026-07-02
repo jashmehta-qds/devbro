@@ -4,6 +4,7 @@ import { TicketView } from './components/TicketView'
 import { TerminalPanel } from './components/TerminalPanel'
 import { ProjectConfigPanel } from './components/ProjectConfigPanel'
 import { AnalyticsDashboard } from './components/AnalyticsDashboard'
+import { HelpPanel } from './components/HelpPanel'
 import { ProjectView } from './components/ProjectView'
 import { TabBar } from './components/TabBar'
 import { CommandPalette } from './components/CommandPalette'
@@ -33,6 +34,7 @@ export default function App() {
   const terminalOpen = store.terminalOpen
   const settingsOpen = store.settingsOpen
   const dashboardOpen = store.dashboardOpen
+  const helpOpen = store.helpOpen
   const standupOpen = store.standupOpen
   const activeProjectId = store.activeProjectId
   const commandPaletteOpen = store.commandPaletteOpen
@@ -43,6 +45,9 @@ export default function App() {
   const {
     setCommandPaletteOpen,
     setStandupOpen,
+    openSettingsTab,
+    openDashboardTab,
+    openHelpTab,
     focusTab,
     closeTab,
     updateTab,
@@ -172,10 +177,16 @@ export default function App() {
         }
         return
       }
+
+      // Cmd+D analytics · Cmd+U standup · Cmd+, settings · Cmd+? / Cmd+/ help
+      if (e.key === 'd' && !e.shiftKey) { e.preventDefault(); openDashboardTab(); return }
+      if (e.key === 'u' && !e.shiftKey) { e.preventDefault(); setStandupOpen(true); return }
+      if (e.key === ',')               { e.preventDefault(); openSettingsTab(); return }
+      if (e.key === '?' || e.key === '/') { e.preventDefault(); openHelpTab(); return }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [setCommandPaletteOpen, focusTab, closeTab, setTerminalOpen, openTerminal])
+  }, [setCommandPaletteOpen, focusTab, closeTab, setTerminalOpen, openTerminal, openDashboardTab, setStandupOpen, openSettingsTab, openHelpTab])
 
   // Inform main process which tabs are open (drives polling)
   useEffect(() => {
@@ -311,6 +322,10 @@ export default function App() {
               ) : dashboardOpen ? (
                 <ErrorBoundary label="AnalyticsDashboard">
                   <AnalyticsDashboard />
+                </ErrorBoundary>
+              ) : helpOpen ? (
+                <ErrorBoundary label="HelpPanel">
+                  <HelpPanel />
                 </ErrorBoundary>
               ) : activeProjectId ? (
                 <ErrorBoundary label="ProjectView">
