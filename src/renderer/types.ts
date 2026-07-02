@@ -322,9 +322,18 @@ export interface WindowApi {
   }
   analytics: {
     getDashboard: () => Promise<AnalyticsDashboard>
+    getVelocity: (weeks?: number) => Promise<Array<{ weekStart: number; doneCount: number }>>
+    getFocus: () => Promise<{ terminalMinutes: number; appMinutes: number | null; ratio: number | null; deepWorkMinutes: number }>
+    getAging: (dayThreshold?: number) => Promise<Array<{ ticketId: string; identifier: string; title: string; lastTouchedAt: number; daysStale: number }>>
+    getStreak: () => Promise<{ currentStreak: number; longestStreak: number }>
+    exportCsv: (from?: number, to?: number) => Promise<string>
   }
   git: {
     getBranchInfo: (repoPath: string) => Promise<GitBranchInfo>
+    getDiff: (repoPath: string, fromSha?: string, toSha?: string) => Promise<string>
+  }
+  activity: {
+    getForTicket: (ticketId: string) => Promise<Array<{ id: string; type: 'session' | 'status' | 'progress'; at: number; data: any }>>
   }
   project: {
     getDetails: (projectId: string) => Promise<ProjectDetails>

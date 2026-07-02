@@ -2,6 +2,12 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { ProgressBar } from './ProgressBar'
 import type { AnalyticsDashboard as AnalyticsDashboardData, ProjectDeadlineEntry } from '../types'
 
+// ---- new insight types ----
+type VelocityPoint = { weekStart: number; doneCount: number }
+type FocusData = { terminalMinutes: number; appMinutes: number | null; ratio: number | null; deepWorkMinutes: number }
+type AgingTicket = { ticketId: string; identifier: string; title: string; lastTouchedAt: number; daysStale: number }
+type StreakData = { currentStreak: number; longestStreak: number }
+
 function formatMs(ms: number): string {
   if (ms < 60_000) return '< 1m'
   const h = Math.floor(ms / 3_600_000)
@@ -107,17 +113,50 @@ export function AnalyticsDashboard() {
   const [data, setData] = useState<AnalyticsDashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [velocity, setVelocity] = useState<VelocityPoint[]>([])
+  const [focus, setFocus] = useState<FocusData | null>(null)
+  const [aging, setAging] = useState<AgingTicket[]>([])
+  const [streak, setStreak] = useState<StreakData | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   const load = useCallback(async () => {
     try {
       setLoading(true)
-      const result = await window.api.analytics.getDashboard()
+      const [result, vel, foc, age, str] = await Promise.all([
+        window.api.analytics.getDashboard(),
+        window.api.analytics.getVelocity(8),
+        window.api.analytics.getFocus(),
+        window.api.analytics.getAging(3),
+        window.api.analytics.getStreak(),
+      ])
       setData(result)
+      setVelocity(vel)
+      setFocus(foc)
+      setAging(age)
+      setStreak(str)
       setError(null)
     } catch (e: any) {
       setError(e?.message || 'Failed to load analytics')
     } finally {
       setLoading(false)
+    }
+  }, [])
+
+  const handleExportCsv = useCallback(async () => {
+    setExporting(true)
+    try {
+      const csv = await window.api.analytics.exportCsv()
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'devbro-export.csv'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      console.error('CSV export failed', e)
+    } finally {
+      setExporting(false)
     }
   }, [])
 
@@ -159,17 +198,29 @@ export function AnalyticsDashboard() {
             <h2 className="text-2xl font-semibold text-gray-50 tracking-tight">Analytics</h2>
             <p className="text-sm text-gray-500 mt-1">Your productivity at a glance</p>
           </div>
-          <button
-            onClick={load}
-            disabled={loading}
-            className="flex items-center gap-1.5 text-sm text-gray-300 hover:text-gray-50 transition-colors px-3 py-2 rounded-lg hover:bg-gray-900"
-          >
-            <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportCsv}
+              disabled={exporting}
+              className="flex items-center gap-1.5 text-sm text-gray-300 hover:text-gray-50 transition-colors px-3 py-2 rounded-lg hover:bg-gray-900 border border-gray-800"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              {exporting ? 'Exporting…' : 'Export CSV'}
+            </button>
+            <button
+              onClick={load}
+              disabled={loading}
+              className="flex items-center gap-1.5 text-sm text-gray-300 hover:text-gray-50 transition-colors px-3 py-2 rounded-lg hover:bg-gray-900"
+            >
+              <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh
+            </button>
+          </div>
         </div>
 
         <div className="space-y-6">
@@ -256,6 +307,88 @@ export function AnalyticsDashboard() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* ---- Velocity chart ---- */}
+        {velocity.length > 0 && (() => {
+          const maxDone = Math.max(...velocity.map(v => v.doneCount), 1)
+          return (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-soft">
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-[0.14em] mb-4">Velocity — Issues Done / Week</p>
+              <div className="flex items-end gap-2" style={{ height: 80 }}>
+                {velocity.map((pt) => {
+                  const heightPct = (pt.doneCount / maxDone) * 100
+                  const label = new Date(pt.weekStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                  return (
+                    <div key={pt.weekStart} className="flex flex-col items-center flex-1 gap-1 h-full">
+                      <div className="flex-1 flex items-end w-full">
+                        <div
+                          title={`${label}: ${pt.doneCount} done`}
+                          className="w-8 rounded-t bg-violet-500/70 hover:bg-violet-400 transition-colors cursor-default mx-auto"
+                          style={{ height: `${Math.max(heightPct, pt.doneCount > 0 ? 8 : 2)}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] text-gray-500 whitespace-nowrap">{label}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* ---- Focus score + Streak ---- */}
+        <div className="grid grid-cols-2 gap-6">
+          {focus && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-soft">
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-[0.14em] mb-3">Deep work this week</p>
+              <p className="text-3xl font-semibold text-gray-50 tracking-tight font-mono">
+                {focus.terminalMinutes >= 60
+                  ? `${Math.floor(focus.terminalMinutes / 60)}h ${focus.terminalMinutes % 60}m`
+                  : `${focus.terminalMinutes}m`}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">terminal time in last 7 days</p>
+            </div>
+          )}
+
+          {streak && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-soft">
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-[0.14em] mb-3">Streak</p>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl">🔥</span>
+                <span className="text-3xl font-semibold text-gray-50 tracking-tight font-mono">{streak.currentStreak}</span>
+                <span className="text-sm text-gray-400">day{streak.currentStreak !== 1 ? 's' : ''}</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">Longest: {streak.longestStreak} day{streak.longestStreak !== 1 ? 's' : ''}</p>
+            </div>
+          )}
+        </div>
+
+        {/* ---- Ticket aging ---- */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-soft">
+          <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-[0.14em] mb-4">Stalling In-Progress Tickets</p>
+          {aging.length === 0 ? (
+            <p className="text-xs text-gray-500 italic">Everything's fresh — no stalling tickets.</p>
+          ) : (
+            <div className="space-y-1">
+              {aging.map((t) => {
+                const chipClass = t.daysStale >= 14
+                  ? 'bg-red-900/40 text-red-400 border-red-800/50'
+                  : t.daysStale >= 7
+                    ? 'bg-orange-900/40 text-orange-400 border-orange-800/50'
+                    : 'bg-yellow-900/30 text-yellow-500 border-yellow-800/30'
+                return (
+                  <div key={t.ticketId} className="flex items-center gap-3 py-2 border-b border-gray-900 last:border-0">
+                    <span className="text-xs font-mono text-gray-500 flex-shrink-0 w-20 truncate">{t.identifier}</span>
+                    <span className="text-xs text-gray-300 flex-1 truncate">{t.title}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded border font-medium flex-shrink-0 ${chipClass}`}>
+                      {t.daysStale}d stale
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {data.inProgress.length > 0 && (

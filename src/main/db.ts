@@ -253,6 +253,10 @@ const MIGRATIONS: Array<{ v: number; sql: string }> = [
     v: 19,
     sql: '', // handled specially in migrate() via columnExists(); sql field unused for this version
   },
+  {
+    v: 20,
+    sql: '', // handled specially — adds columns to time_sessions via columnExists
+  },
 ]
 
 function columnExists(db: Database.Database, table: string, column: string): boolean {
@@ -270,6 +274,19 @@ function migrate(db: Database.Database): void {
       db.transaction(() => {
         if (!columnExists(db, 'project_configs', 'local_repo')) {
           db.exec(`ALTER TABLE project_configs ADD COLUMN local_repo TEXT NOT NULL DEFAULT ''`)
+        }
+        db.prepare('INSERT OR IGNORE INTO _schema_version VALUES (?)').run(m.v)
+      })()
+    } else if (m.v === 20) {
+      db.transaction(() => {
+        if (!columnExists(db, 'time_sessions', 'git_start_sha')) {
+          db.exec(`ALTER TABLE time_sessions ADD COLUMN git_start_sha TEXT`)
+        }
+        if (!columnExists(db, 'time_sessions', 'exit_code')) {
+          db.exec(`ALTER TABLE time_sessions ADD COLUMN exit_code INTEGER`)
+        }
+        if (!columnExists(db, 'time_sessions', 'summary')) {
+          db.exec(`ALTER TABLE time_sessions ADD COLUMN summary TEXT`)
         }
         db.prepare('INSERT OR IGNORE INTO _schema_version VALUES (?)').run(m.v)
       })()

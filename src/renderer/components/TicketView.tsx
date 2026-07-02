@@ -3,6 +3,8 @@ import { useAppStore } from '../store'
 import { ELI5Card } from './ELI5Card'
 import { ChecklistWidget } from './ChecklistWidget'
 import { SkillsTab } from './SkillsTab'
+import { DiffViewer } from './DiffViewer'
+import { ActivityTimeline } from './ActivityTimeline'
 import type { IssueState, GitBranchInfo } from '../types'
 import { useTerminal } from '../hooks/useTerminal'
 import { useLinear } from '../hooks/useLinear'
@@ -577,8 +579,15 @@ export function TicketView() {
             {secondaryTab === 'notes' && <InlineNotes ticketId={selectedIssue.id} />}
             {secondaryTab === 'checklist' && <ChecklistWidget ticketId={selectedIssue.id} />}
             {secondaryTab === 'skills' && <SkillsTab ticketId={selectedIssue.id} />}
-            {secondaryTab === 'diff' && <p className="text-gray-500 text-sm">Diff viewer coming soon</p>}
-            {secondaryTab === 'activity' && <p className="text-gray-500 text-sm">Activity timeline coming soon</p>}
+            {secondaryTab === 'diff' && (
+              <DiffViewer ticketId={selectedIssue.id} projectRepos={projectRepos} />
+            )}
+            {secondaryTab === 'activity' && (
+              <ActivityTimeline
+                ticketId={selectedIssue.id}
+                onSwitchToDiff={() => setSecondaryTab('diff')}
+              />
+            )}
           </div>
         </div>
       </div>

@@ -28,6 +28,9 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
   const [previewExpanded, setPreviewExpanded] = useState<boolean>(false)
   const [refreshFeedback, setRefreshFeedback] = useState<boolean>(false)
   const [terminalReady, setTerminalReady] = useState<boolean>(false)
+  const [editing, setEditing] = useState<boolean>(false)
+  const [editedText, setEditedText] = useState<string>('')
+  const [saving, setSaving] = useState<boolean>(false)
 
   const loadPreview = useCallback(async () => {
     if (!selectedIssue) return
@@ -195,6 +198,31 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
     terminalRef.current?.clear()
   }, [])
 
+  const handleEditStart = useCallback(() => {
+    setEditedText(previewText)
+    setEditing(true)
+  }, [previewText])
+
+  const handleEditCancel = useCallback(() => {
+    setEditing(false)
+    setEditedText('')
+  }, [])
+
+  const handleSaveAndLaunch = useCallback(async () => {
+    if (!selectedIssue) return
+    setSaving(true)
+    try {
+      await window.api.context.writeForSession(selectedIssue.id, selectedIssue, editedText)
+      await handleOpenTerminal()
+    } catch (err) {
+      console.error('Failed to save context', err)
+    } finally {
+      setSaving(false)
+      setEditing(false)
+      setEditedText('')
+    }
+  }, [selectedIssue, editedText, handleOpenTerminal])
+
   // Identifier label for the header
   const headerLabel = selectedIssue
     ? `${selectedIssue.identifier} › terminal`
@@ -269,22 +297,57 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
               >
                 <span className="text-[11px] font-mono uppercase tracking-[0.14em] text-gray-400">CLAUDE.md Preview</span>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); loadPreview() }}
-                    disabled={previewLoading}
-                    className="text-[11px] text-violet-300 hover:text-violet-200 disabled:opacity-50 transition-colors"
-                  >
-                    {previewLoading ? 'Loading…' : 'Refresh'}
-                  </button>
+                  {!editing && (
+                    <>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); loadPreview() }}
+                        disabled={previewLoading}
+                        className="text-[11px] text-violet-300 hover:text-violet-200 disabled:opacity-50 transition-colors"
+                      >
+                        {previewLoading ? 'Loading…' : 'Refresh'}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleEditStart() }}
+                        className="text-[11px] text-gray-400 hover:text-gray-100 transition-colors"
+                      >
+                        Edit
+                      </button>
+                    </>
+                  )}
+                  {editing && (
+                    <>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleEditCancel() }}
+                        disabled={saving}
+                        className="text-[11px] text-gray-400 hover:text-gray-100 disabled:opacity-50 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleSaveAndLaunch() }}
+                        disabled={saving}
+                        className="text-[11px] text-emerald-300 hover:text-emerald-200 disabled:opacity-50 transition-colors"
+                      >
+                        {saving ? 'Saving…' : 'Save & Launch'}
+                      </button>
+                    </>
+                  )}
                   <span className="text-gray-600">{previewExpanded ? '▲' : '▼'}</span>
                 </div>
               </button>
-              {previewExpanded && (
+              {previewExpanded && !editing && (
                 <pre className="whitespace-pre-wrap text-[11px] text-gray-300 font-mono bg-gray-950 p-4 max-h-72 overflow-y-auto border-t border-gray-800 leading-relaxed">
                   {previewLoading
                     ? 'Loading preview…'
                     : previewText || '(empty)'}
                 </pre>
+              )}
+              {previewExpanded && editing && (
+                <textarea
+                  value={editedText}
+                  onChange={(e) => setEditedText(e.target.value)}
+                  className="bg-gray-950 border-t border-gray-800 text-[11px] text-gray-200 font-mono p-4 w-full min-h-[300px] outline-none resize-none focus:bg-gray-950"
+                />
               )}
             </div>
 

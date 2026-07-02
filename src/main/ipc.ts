@@ -589,6 +589,179 @@ Rules for newPercent:
   // ============================================================
   // Analytics handlers
   // ============================================================
+  // ============================================================
+  // Analytics: new insight handlers
+  // ============================================================
+
+  ipcMain.handle('analytics:getVelocity', async (_event, weeks = 8) => {
+    const db = getDb()
+    const since = Date.now() - weeks * 7 * 24 * 60 * 60 * 1000
+    const rows = db.prepare(`
+      SELECT changed_at FROM status_changes
+      WHERE changed_at >= ?
+        AND (LOWER(to_state) = 'done' OR LOWER(to_state) = 'completed')
+    `).all(since) as { changed_at: number }[]
+
+    // Build week buckets
+    const buckets = new Map<number, number>()
+    for (let i = 0; i < weeks; i++) {
+      const weekStart = new Date()
+      weekStart.setHours(0, 0, 0, 0)
+      // align to Monday of each past week
+      const day = weekStart.getDay()
+      const diffToMonday = (day === 0 ? 6 : day - 1)
+      weekStart.setDate(weekStart.getDate() - diffToMonday - i * 7)
+      buckets.set(weekStart.getTime(), 0)
+    }
+
+    for (const row of rows) {
+      const d = new Date(row.changed_at)
+      d.setHours(0, 0, 0, 0)
+      const day = d.getDay()
+      d.setDate(d.getDate() - (day === 0 ? 6 : day - 1))
+      const key = d.getTime()
+      if (buckets.has(key)) buckets.set(key, (buckets.get(key) ?? 0) + 1)
+    }
+
+    return Array.from(buckets.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([weekStart, doneCount]) => ({ weekStart, doneCount }))
+  })
+
+  ipcMain.handle('analytics:getFocus', async () => {
+    const db = getDb()
+    const since = Date.now() - 7 * 24 * 60 * 60 * 1000
+    const rows = db.prepare(`
+      SELECT started_at, ended_at FROM time_sessions WHERE started_at >= ?
+    `).all(since) as { started_at: number; ended_at: number | null }[]
+
+    let terminalMs = 0
+    for (const r of rows) {
+      terminalMs += (r.ended_at ?? Date.now()) - r.started_at
+    }
+    const terminalMinutes = Math.round(terminalMs / 60_000)
+    // No time_sessions total-app-time column; skip ratio
+    return { terminalMinutes, appMinutes: null as null, ratio: null as null, deepWorkMinutes: terminalMinutes }
+  })
+
+  ipcMain.handle('analytics:getAging', async (_event, dayThreshold = 3) => {
+    const db = getDb()
+    const now = Date.now()
+    // Get in-progress issues from issues_cache
+    const issueRows = db.prepare('SELECT id, data FROM issues_cache').all() as { id: string; data: string }[]
+    const results: { ticketId: string; identifier: string; title: string; lastTouchedAt: number; daysStale: number }[] = []
+
+    for (const row of issueRows) {
+      let parsed: any
+      try { parsed = JSON.parse(row.data) } catch { continue }
+      // Check state type: Linear uses state.type = 'started' for in-progress
+      const stateType: string = parsed?.state?.type ?? ''
+      const stateName: string = (parsed?.state?.name ?? '').toLowerCase()
+      const isInProgress = stateType === 'started' || stateName.includes('progress') || stateName === 'in progress'
+      if (!isInProgress) continue
+
+      // Find most recent time_session for this ticket
+      const lastSession = db.prepare(`
+        SELECT MAX(started_at) as last FROM time_sessions WHERE ticket_id = ?
+      `).get(row.id) as { last: number | null }
+
+      let lastTouchedAt: number
+      if (lastSession?.last) {
+        lastTouchedAt = lastSession.last
+      } else {
+        // Fall back to issue updatedAt (stored in JSON as ISO string)
+        const updatedAt = parsed?.updatedAt ?? parsed?.updated_at ?? null
+        lastTouchedAt = updatedAt ? new Date(updatedAt).getTime() : now
+      }
+
+      const daysStale = Math.floor((now - lastTouchedAt) / (24 * 60 * 60 * 1000))
+      if (daysStale >= dayThreshold) {
+        results.push({
+          ticketId: row.id,
+          identifier: parsed?.identifier ?? row.id,
+          title: parsed?.title ?? row.id,
+          lastTouchedAt,
+          daysStale,
+        })
+      }
+    }
+
+    results.sort((a, b) => b.daysStale - a.daysStale)
+    return results.slice(0, 10)
+  })
+
+  ipcMain.handle('analytics:getStreak', async () => {
+    const db = getDb()
+    // Get all distinct days that have time_sessions
+    const rows = db.prepare(`
+      SELECT DISTINCT DATE(started_at / 1000, 'unixepoch', 'localtime') as day
+      FROM time_sessions ORDER BY day DESC
+    `).all() as { day: string }[]
+
+    const daySet = new Set(rows.map(r => r.day))
+
+    const toLocalDate = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+    let currentStreak = 0
+    const today = new Date()
+    for (let i = 0; i < 365; i++) {
+      const d = new Date(today)
+      d.setDate(today.getDate() - i)
+      if (daySet.has(toLocalDate(d))) {
+        currentStreak++
+      } else if (i > 0) {
+        break
+      }
+    }
+
+    // Longest streak
+    const allDays = rows.map(r => r.day).sort()
+    let longest = 0, cur = 0, prev: string | null = null
+    for (const day of allDays) {
+      if (prev) {
+        const prevDate = new Date(prev + 'T00:00:00')
+        const curDate = new Date(day + 'T00:00:00')
+        const diff = Math.round((curDate.getTime() - prevDate.getTime()) / (24 * 60 * 60 * 1000))
+        if (diff === 1) { cur++ } else { cur = 1 }
+      } else { cur = 1 }
+      if (cur > longest) longest = cur
+      prev = day
+    }
+
+    return { currentStreak, longestStreak: longest }
+  })
+
+  ipcMain.handle('analytics:exportCsv', async (_event, from?: number, to?: number) => {
+    const db = getDb()
+    const since = from ?? 0
+    const until = to ?? Date.now()
+    const rows = db.prepare(`
+      SELECT ts.ticket_id, ic.data, ts.started_at, ts.ended_at
+      FROM time_sessions ts
+      LEFT JOIN issues_cache ic ON ic.id = ts.ticket_id
+      WHERE ts.started_at >= ? AND ts.started_at <= ?
+      ORDER BY ts.started_at ASC
+    `).all(since, until) as { ticket_id: string; data: string | null; started_at: number; ended_at: number | null }[]
+
+    const escape = (v: string) => `"${String(v).replace(/"/g, '""')}"`
+    const lines = ['ticket_id,identifier,started_at,ended_at,duration_minutes,exit_code,summary']
+    for (const r of rows) {
+      let identifier = r.ticket_id
+      try { identifier = JSON.parse(r.data ?? '{}')?.identifier ?? r.ticket_id } catch {}
+      const durationMs = (r.ended_at ?? Date.now()) - r.started_at
+      const durationMin = (durationMs / 60_000).toFixed(2)
+      const startedIso = new Date(r.started_at).toISOString()
+      const endedIso = r.ended_at ? new Date(r.ended_at).toISOString() : ''
+      lines.push([
+        escape(r.ticket_id), escape(identifier),
+        escape(startedIso), escape(endedIso),
+        durationMin, '', ''
+      ].join(','))
+    }
+    return lines.join('\n')
+  })
+
   ipcMain.handle('analytics:getDashboard', async () => {
     const db = getDb()
 
@@ -766,6 +939,78 @@ Rules for newPercent:
   // ============================================================
   // Git handlers
   // ============================================================
+  ipcMain.handle('git:getDiff', async (_event, repoPath: string, fromSha?: string, toSha?: string) => {
+    const { execSync } = require('child_process')
+    const expandedPath = repoPath.replace(/^~/, require('os').homedir())
+    try {
+      const cmd = fromSha
+        ? `git diff ${fromSha}..${toSha ?? 'HEAD'}`
+        : 'git diff HEAD --'
+      return execSync(cmd, { cwd: expandedPath, timeout: 10000, maxBuffer: 2 * 1024 * 1024 }).toString()
+    } catch {
+      return ''
+    }
+  })
+
+  // ============================================================
+  // Activity handlers
+  // ============================================================
+  ipcMain.handle('activity:getForTicket', async (_event, ticketId: string) => {
+    const db = getDb()
+    const events: Array<{ id: string; type: string; at: number; data: any }> = []
+
+    try {
+      const sessions = db.prepare(
+        'SELECT id, started_at, ended_at, git_start_sha, exit_code, summary FROM time_sessions WHERE ticket_id = ? ORDER BY started_at DESC'
+      ).all(ticketId) as any[]
+      for (const s of sessions) {
+        events.push({
+          id: `session-${s.id}`,
+          type: 'session',
+          at: s.started_at,
+          data: {
+            started_at: s.started_at,
+            ended_at: s.ended_at,
+            gitStartSha: s.git_start_sha ?? null,
+            exitCode: s.exit_code ?? null,
+            summary: s.summary ?? null,
+          }
+        })
+      }
+    } catch {}
+
+    try {
+      const statusChanges = db.prepare(
+        'SELECT id, from_state, to_state, changed_at FROM status_changes WHERE ticket_id = ? ORDER BY changed_at DESC'
+      ).all(ticketId) as any[]
+      for (const sc of statusChanges) {
+        events.push({
+          id: `status-${sc.id}`,
+          type: 'status',
+          at: sc.changed_at,
+          data: { from_state: sc.from_state, to_state: sc.to_state }
+        })
+      }
+    } catch {}
+
+    try {
+      const progress = db.prepare(
+        'SELECT id, percent, log, updated_at FROM progress WHERE ticket_id = ?'
+      ).all(ticketId) as any[]
+      for (const p of progress) {
+        events.push({
+          id: `progress-${p.id}`,
+          type: 'progress',
+          at: p.updated_at,
+          data: { percent: p.percent, log: p.log }
+        })
+      }
+    } catch {}
+
+    events.sort((a, b) => b.at - a.at)
+    return events
+  })
+
   ipcMain.handle('git:getBranchInfo', async (_event, repoPath: string) => {
     const { execSync } = require('child_process')
     const expandedPath = repoPath.replace(/^~/, require('os').homedir())
@@ -946,6 +1191,29 @@ ${activityContext}`
     const content = await buildContextContent(ticketId, issueData, cwd)
     fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), content, 'utf-8')
     return { ok: true, path: path.join(cwd, 'CLAUDE.md') }
+  })
+
+  ipcMain.handle('context:writeForSession', async (_event, ticketId: string, issueData: any, editedText: string) => {
+    const workDir = getWorkDir()
+    const projectId = issueData?.project?.id as string | undefined
+    let cwd: string | undefined
+    try {
+      const db = getDb()
+      if (projectId) {
+        const row = db.prepare('SELECT repo_name FROM project_repos WHERE linear_project_id = ? ORDER BY created_at ASC LIMIT 1').get(projectId) as any
+        if (row?.repo_name) {
+          const p = path.join(workDir, row.repo_name)
+          if (fs.existsSync(p)) cwd = p
+        }
+      }
+    } catch {}
+    if (!cwd) {
+      const home = process.env.HOME || os.homedir()
+      cwd = home
+    }
+    const claudePath = path.join(cwd, 'CLAUDE.md')
+    fs.writeFileSync(claudePath, editedText, 'utf-8')
+    return { ok: true, path: claudePath }
   })
 
   // ============================================================

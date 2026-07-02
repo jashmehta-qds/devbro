@@ -125,10 +125,20 @@ contextBridge.exposeInMainWorld('api', {
 
   analytics: {
     getDashboard: () => ipcRenderer.invoke('analytics:getDashboard'),
+    getVelocity: (weeks?: number) => ipcRenderer.invoke('analytics:getVelocity', weeks),
+    getFocus: () => ipcRenderer.invoke('analytics:getFocus'),
+    getAging: (dayThreshold?: number) => ipcRenderer.invoke('analytics:getAging', dayThreshold),
+    getStreak: () => ipcRenderer.invoke('analytics:getStreak'),
+    exportCsv: (from?: number, to?: number) => ipcRenderer.invoke('analytics:exportCsv', from, to),
   },
 
   git: {
     getBranchInfo: (repoPath: string) => ipcRenderer.invoke('git:getBranchInfo', repoPath),
+    getDiff: (repoPath: string, fromSha?: string, toSha?: string) => ipcRenderer.invoke('git:getDiff', repoPath, fromSha, toSha),
+  },
+
+  activity: {
+    getForTicket: (ticketId: string) => ipcRenderer.invoke('activity:getForTicket', ticketId),
   },
 
   project: {
@@ -142,6 +152,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('context:preview', ticketId, issueData, repoName),
     refreshForSession: (sessionId: string, ticketId: string, issueData: any) =>
       ipcRenderer.invoke('context:refreshForSession', sessionId, ticketId, issueData),
+    writeForSession: (ticketId: string, issueData: any, editedText: string) =>
+      ipcRenderer.invoke('context:writeForSession', ticketId, issueData, editedText),
   },
 
   projectSkills: {

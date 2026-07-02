@@ -216,7 +216,7 @@ export async function createTerminal(
   try {
     const db = getDb()
     const tsId = randomUUID()
-    db.prepare('INSERT INTO time_sessions (id, ticket_id, started_at) VALUES (?, ?, ?)').run(tsId, ticketId, sessionStartedAt)
+    db.prepare('INSERT INTO time_sessions (id, ticket_id, started_at, git_start_sha) VALUES (?, ?, ?, ?)').run(tsId, ticketId, sessionStartedAt, gitStartSha ?? null)
     session.timeSessionId = tsId
   } catch {}
 
@@ -300,7 +300,7 @@ export async function createTerminal(
     try {
       if (session.timeSessionId) {
         const db = getDb()
-        db.prepare('UPDATE time_sessions SET ended_at = ? WHERE id = ?').run(endedAt, session.timeSessionId)
+        db.prepare('UPDATE time_sessions SET ended_at = ?, exit_code = ? WHERE id = ?').run(endedAt, exitCode ?? null, session.timeSessionId)
       }
     } catch {}
 

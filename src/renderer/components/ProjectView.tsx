@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { useAppStore } from '../store'
 import type { ProjectDetails } from '../types'
 import { Markdown } from './Markdown'
+import { KanbanBoard } from './KanbanBoard'
 
 const STATE_TYPE_COLORS: Record<string, string> = {
   backlog: '#6B7280',
@@ -189,6 +190,7 @@ export function ProjectView() {
   const { activeProjectId, projectDetails, setProjectDetails, setActiveProjectId, projects } = useAppStore()
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [viewMode, setViewMode] = useState<'list' | 'board'>('list')
 
   useEffect(() => {
     if (activeProjectId) loadDetails(activeProjectId)
@@ -285,8 +287,37 @@ export function ProjectView() {
         <ReposSection projectId={activeProjectId} />
       </div>
 
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+      {/* View mode toggle */}
+      <div className="flex-shrink-0 px-6 py-3 border-b border-gray-800">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setViewMode('list')}
+            className={`h-7 px-3 rounded-md text-[11px] font-medium transition-colors ${
+              viewMode === 'list'
+                ? 'bg-violet-500/10 text-violet-300'
+                : 'text-gray-400 hover:text-gray-100 hover:bg-gray-850'
+            }`}
+          >
+            List
+          </button>
+          <button
+            onClick={() => setViewMode('board')}
+            className={`h-7 px-3 rounded-md text-[11px] font-medium transition-colors ${
+              viewMode === 'board'
+                ? 'bg-violet-500/10 text-violet-300'
+                : 'text-gray-400 hover:text-gray-100 hover:bg-gray-850'
+            }`}
+          >
+            Board
+          </button>
+        </div>
+      </div>
+
+      {/* Body — conditionally render list or board */}
+      {viewMode === 'board' ? (
+        <KanbanBoard projectId={activeProjectId} />
+      ) : (
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
         {loading ? (
           <div className="space-y-4">
             {[80, 40, 100, 60].map((w, i) => (
@@ -441,7 +472,8 @@ export function ProjectView() {
         ) : (
           <p className="text-sm text-gray-600 italic">No details available. Try refreshing.</p>
         )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }

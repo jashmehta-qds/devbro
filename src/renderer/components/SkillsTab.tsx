@@ -8,6 +8,17 @@ interface SkillsTabProps {
   ticketId: string
 }
 
+const SKILL_TEMPLATES = [
+  { label: 'Run tests', cmd: 'npm test' },
+  { label: 'Lint', cmd: 'npm run lint' },
+  { label: 'Type check', cmd: 'npx tsc --noEmit' },
+  { label: 'Build', cmd: 'npm run build' },
+  { label: 'Git status', cmd: 'git status' },
+  { label: 'PR description', cmd: 'claude "read git diff HEAD~1..HEAD and write a PR description in markdown"' },
+  { label: 'Explain diff', cmd: 'claude "explain the changes in git diff"' },
+  { label: 'Write tests', cmd: 'claude "write tests for the changes in git diff HEAD"' },
+]
+
 // Schema reuse: existing tables have (name, command) columns.
 // For global/project we treat the `command` column as `content` — markdown text
 // that Claude reads in CLAUDE.md but is NOT runnable in the terminal.
@@ -41,6 +52,7 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
   const [addingTo, setAddingTo] = useState<'global' | 'project' | 'ticket' | null>(null)
   const [newName, setNewName] = useState('')
   const [newContent, setNewContent] = useState('')
+  const [sentSkillId, setSentSkillId] = useState<string | null>(null)
 
   const toggleCollapse = (key: string) =>
     setCollapsedSections((p) => ({ ...p, [key]: !p[key] }))
@@ -77,8 +89,14 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
   // ---- actions
   const runSkill = async (id: string, command: string) => {
     setRunningId(id)
+    setSentSkillId(id)
     try { await runCommand(command) }
-    finally { setTimeout(() => setRunningId(null), 1000) }
+    finally {
+      setTimeout(() => {
+        setRunningId(null)
+        setSentSkillId(null)
+      }, 1500)
+    }
   }
 
   const cancelEdit = () => {
@@ -91,6 +109,12 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
     setAddingTo(null)
     setNewName('')
     setNewContent('')
+  }
+
+  const applyTemplate = (cmd: string) => {
+    setAddingTo('ticket')
+    setNewName('')
+    setNewContent(cmd)
   }
 
   const addGuideline = async () => {
@@ -196,9 +220,11 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
         <button
           onClick={() => runSkill(s.id, s.command)}
           disabled={runningId === s.id}
-          className="px-2 py-1 bg-green-700/40 text-green-400 rounded text-xs hover:bg-green-700/60 disabled:opacity-50 transition-colors border border-green-700/50"
+          className="inline-flex items-center gap-1 h-6 px-2 rounded-md text-[11px] text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/20 transition-colors disabled:opacity-50"
           title="Run in terminal"
-        >{runningId === s.id ? '...' : '▶'}</button>
+        >
+          {sentSkillId === s.id ? '✓' : '▶'}
+        </button>
         <button
           onClick={() => deleteGuideline('ticket', s.id)}
           className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-all text-xs"
@@ -316,6 +342,22 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
         {sectionHeader('ticket', 'Ticket Commands', '— runnable shortcuts for this ticket', () => setAddingTo(addingTo === 'ticket' ? null : 'ticket'))}
         {!collapsedSections['ticket'] && (
           <>
+            {/* Templates row */}
+            <div className="mb-3">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-gray-500 font-medium mb-1.5">Templates</div>
+              <div className="flex flex-wrap gap-1.5">
+                {SKILL_TEMPLATES.map((t) => (
+                  <button
+                    key={t.label}
+                    onClick={() => applyTemplate(t.cmd)}
+                    className="inline-flex items-center h-6 px-2.5 rounded-md text-[11px] text-gray-400 bg-gray-900 border border-gray-800 hover:border-violet-500/30 hover:text-violet-300 transition-colors cursor-pointer"
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {ticketSkills.length === 0 && addingTo !== 'ticket' && (
               <p className="text-xs text-gray-600 italic">
                 No ticket commands yet. Add shell commands you run often for this ticket — click ▶ to send to the terminal.
