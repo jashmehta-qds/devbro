@@ -130,14 +130,14 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
               value={editName}
               onChange={(e) => setEditName(e.target.value)}
               placeholder="Title"
-              className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-gray-200 focus:outline-none focus:border-indigo-500"
+              className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
             />
             <textarea
               value={editContent}
               onChange={(e) => setEditContent(e.target.value)}
               rows={6}
               placeholder="Markdown instructions, conventions, gotchas..."
-              className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500"
+              className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 placeholder-gray-600 font-mono focus:outline-none focus:border-violet-500"
             />
             <div className="flex gap-2">
               <button
@@ -154,7 +154,7 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
                   }
                   cancelEdit()
                 }}
-                className="px-2.5 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 transition-colors"
+                className="px-2.5 py-1 bg-violet-600 text-white rounded text-xs hover:bg-violet-700 transition-colors"
               >Save</button>
               <button onClick={cancelEdit} className="px-2.5 py-1 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600 transition-colors">Cancel</button>
             </div>
@@ -166,7 +166,7 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
               <div className="flex items-center gap-2 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   onClick={() => { setEditingId(g.id); setEditName(g.name); setEditContent(g.command) }}
-                  className="text-xs text-gray-500 hover:text-indigo-400"
+                  className="text-xs text-gray-500 hover:text-violet-400"
                   title="Edit"
                 >✎</button>
                 <button
@@ -213,13 +213,13 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
     if (addingTo !== tier) return null
     const isCommand = tier === 'ticket'
     return (
-      <div className="bg-gray-800 border border-indigo-700/50 rounded-lg p-3 space-y-2 mt-2">
+      <div className="bg-gray-800 border border-violet-700/50 rounded-lg p-3 space-y-2 mt-2">
         <input
           type="text"
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           placeholder={isCommand ? 'Command name (e.g. "Run tests")' : 'Title (e.g. "Coding conventions")'}
-          className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-indigo-500"
+          className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-violet-500"
           autoFocus
         />
         {isCommand ? (
@@ -229,7 +229,7 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
             onChange={(e) => setNewContent(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addGuideline()}
             placeholder="npm test"
-            className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-gray-200 placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500"
+            className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-gray-200 placeholder-gray-600 font-mono focus:outline-none focus:border-violet-500"
           />
         ) : (
           <textarea
@@ -239,14 +239,14 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
             placeholder={tier === 'global'
               ? 'e.g. "Always use TypeScript strict mode. Prefer functional components. Never disable lint without a comment explaining why."'
               : 'e.g. "Migrations are run via ./scripts/migrate.sh. Tests live under tests/. Use yarn, not npm."'}
-            className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 placeholder-gray-600 font-mono focus:outline-none focus:border-indigo-500"
+            className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-sm text-gray-200 placeholder-gray-600 font-mono focus:outline-none focus:border-violet-500"
           />
         )}
         <div className="flex gap-2">
           <button
             onClick={addGuideline}
             disabled={!newName.trim() || !newContent.trim()}
-            className="px-2.5 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            className="px-2.5 py-1 bg-violet-600 text-white rounded text-xs hover:bg-violet-700 disabled:opacity-50 transition-colors"
           >Save</button>
           <button onClick={cancelAdd} className="px-2.5 py-1 bg-gray-700 text-gray-300 rounded text-xs hover:bg-gray-600 transition-colors">Cancel</button>
         </div>
@@ -265,7 +265,7 @@ export function SkillsTab({ ticketId }: SkillsTabProps) {
         </button>
         <button
           onClick={onAdd}
-          className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+          className="text-xs text-violet-400 hover:text-violet-300 transition-colors"
         >+ Add</button>
       </div>
     )

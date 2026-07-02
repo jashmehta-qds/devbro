@@ -20,6 +20,28 @@ const PRIORITY_MAP: Record<string, number> = {
 
 const STATE_TYPES = new Set(['started', 'backlog', 'completed', 'unstarted', 'cancelled'])
 
+interface AppCommand {
+  id: string
+  label: string
+  desc: string
+  run: (ctx: CommandContext) => void
+}
+
+interface CommandContext {
+  openStandup: () => void
+  openAnalytics: () => void
+  openSettings: () => void
+  refresh: () => void
+  closeCommandPalette: () => void
+}
+
+const COMMANDS: AppCommand[] = [
+  { id: 'standup', label: 'Standup', desc: 'Generate daily standup', run: (ctx) => { ctx.openStandup(); ctx.closeCommandPalette() } },
+  { id: 'dashboard', label: 'Analytics', desc: 'Open analytics dashboard', run: (ctx) => { ctx.openAnalytics(); ctx.closeCommandPalette() } },
+  { id: 'settings', label: 'Settings', desc: 'Open project configuration', run: (ctx) => { ctx.openSettings(); ctx.closeCommandPalette() } },
+  { id: 'refresh', label: 'Refresh', desc: 'Reload issues from tracker', run: (ctx) => { ctx.refresh(); ctx.closeCommandPalette() } },
+]
+
 interface ParsedQuery {
   text: string
   priority: number | null
@@ -59,17 +81,85 @@ function fuzzyMatch(text: string, issue: LinearIssue): boolean {
   return words.every((w) => haystack.includes(w))
 }
 
+const Kbd = ({ children, large }: { children: React.ReactNode; large?: boolean }) => (
+  <span className={`inline-flex items-center justify-center font-mono border border-gray-700/50 bg-gray-800 text-gray-400 rounded-md ${large ? 'min-w-[24px] h-6 px-1.5 text-xs' : 'min-w-[20px] h-5 px-1.5 text-[11px]'}`}>
+    {children}
+  </span>
+)
+
+const IconSearch = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="8" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+  </svg>
+)
+
+const IconCommand = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z" />
+  </svg>
+)
+
+const IconHash = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="4" y1="9" x2="20" y2="9" />
+    <line x1="4" y1="15" x2="20" y2="15" />
+    <line x1="10" y1="3" x2="8" y2="21" />
+    <line x1="16" y1="3" x2="14" y2="21" />
+  </svg>
+)
+
 export function CommandPalette() {
-  const { setCommandPaletteOpen, issues, openTab, tabs, recentIssueIds } = useAppStore()
+  const {
+    setCommandPaletteOpen,
+    issues,
+    openTab,
+    tabs,
+    recentIssueIds,
+    setStandupOpen,
+    openDashboardTab,
+    openSettingsTab,
+    setIsSyncing,
+  } = useAppStore()
   const [query, setQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const allIssues: LinearIssue[] = useMemo(() => Object.values(issues).flat(), [issues])
 
+  const mode = useMemo(() => {
+    if (query.startsWith('>')) return 'command'
+    if (query.startsWith('#')) return 'identifier'
+    return 'issue'
+  }, [query])
+
+  const commandCtx: CommandContext = useMemo(() => ({
+    openStandup: () => setStandupOpen(true),
+    openAnalytics: () => openDashboardTab(),
+    openSettings: () => openSettingsTab(),
+    refresh: () => setIsSyncing(true),
+    closeCommandPalette: () => setCommandPaletteOpen(false),
+  }), [setStandupOpen, openDashboardTab, openSettingsTab, setIsSyncing, setCommandPaletteOpen])
+
+  const filteredCommands = useMemo(() => {
+    if (mode !== 'command') return []
+    const searchText = query.slice(1).toLowerCase().trim()
+    if (!searchText) return COMMANDS.slice(0, 20)
+    return COMMANDS.filter((cmd) => cmd.label.toLowerCase().includes(searchText)).slice(0, 20)
+  }, [query, mode])
+
+  const filteredByIdentifier = useMemo(() => {
+    if (mode !== 'identifier') return []
+    const searchId = query.slice(1).toLowerCase()
+    if (!searchId) return []
+    return allIssues.filter((i) => i.identifier.toLowerCase().includes(searchId)).slice(0, 20)
+  }, [query, mode, allIssues])
+
   const parsed = useMemo(() => parseQuery(query), [query])
 
-  const filtered: LinearIssue[] = useMemo(() => {
+  const filteredIssues: LinearIssue[] = useMemo(() => {
+    if (mode !== 'issue') return []
+
     let pool = allIssues.filter((i) => {
       if (parsed.priority !== null && i.priority !== parsed.priority) return false
       if (parsed.stateType !== null && i.state.type !== parsed.stateType) return false
@@ -77,7 +167,6 @@ export function CommandPalette() {
     })
 
     if (!query.trim()) {
-      // Default ordering: open tabs first, then recents in order, then everything else
       const tabIds = new Set(tabs.map((t) => t.id))
       const recentSet = new Set(recentIssueIds)
       const byId = new Map(pool.map((i) => [i.id, i]))
@@ -112,7 +201,13 @@ export function CommandPalette() {
     }
 
     return pool.slice(0, 20)
-  }, [allIssues, parsed, query, tabs, recentIssueIds])
+  }, [mode, allIssues, parsed, query, tabs, recentIssueIds])
+
+  const filtered = useMemo(() => {
+    if (mode === 'command') return filteredCommands as any[]
+    if (mode === 'identifier') return filteredByIdentifier as any[]
+    return filteredIssues as any[]
+  }, [mode, filteredCommands, filteredByIdentifier, filteredIssues])
 
   useEffect(() => {
     setSelectedIdx(0)
@@ -122,12 +217,19 @@ export function CommandPalette() {
     inputRef.current?.focus()
   }, [])
 
-  const handleSelect = useCallback(
+  const handleSelectIssue = useCallback(
     (issue: LinearIssue) => {
       openTab(issue)
       setCommandPaletteOpen(false)
     },
     [openTab, setCommandPaletteOpen]
+  )
+
+  const handleSelectCommand = useCallback(
+    (cmd: AppCommand) => {
+      cmd.run(commandCtx)
+    },
+    [commandCtx]
   )
 
   const handleKeyDown = useCallback(
@@ -141,36 +243,49 @@ export function CommandPalette() {
         e.preventDefault()
         setSelectedIdx((i) => Math.max(i - 1, 0))
       } else if (e.key === 'Enter') {
-        if (filtered[selectedIdx]) {
-          handleSelect(filtered[selectedIdx])
+        const item = filtered[selectedIdx]
+        if (!item) return
+        if (mode === 'command') {
+          handleSelectCommand(item as AppCommand)
+        } else {
+          handleSelectIssue(item as LinearIssue)
         }
       }
     },
-    [filtered, selectedIdx, handleSelect, setCommandPaletteOpen]
+    [filtered, selectedIdx, mode, handleSelectCommand, handleSelectIssue, setCommandPaletteOpen]
   )
 
   const isOpenInTab = (issue: LinearIssue) => tabs.some((t) => t.id === issue.id)
 
-  // Group by project for header display when multiple projects appear
   const projectNames = useMemo(() => {
     const set = new Set<string>()
-    for (const i of filtered) set.add(i.project?.name ?? 'No Project')
+    if (mode === 'issue') {
+      for (const i of filteredIssues) set.add((i as LinearIssue).project?.name ?? 'No Project')
+    }
     return set
-  }, [filtered])
+  }, [filteredIssues, mode])
 
   const showProjectHeaders = projectNames.size > 1
 
-  // Build a flat render list with optional project headers; track indices for keyboard nav
   const renderItems = useMemo(() => {
-    if (!showProjectHeaders) {
-      return filtered.map((issue, idx) => ({ kind: 'issue' as const, issue, idx }))
+    if (mode === 'command') {
+      return filteredCommands.map((cmd, idx) => ({ kind: 'command' as const, cmd, idx }))
     }
+
+    if (mode === 'identifier') {
+      return filteredByIdentifier.map((issue, idx) => ({ kind: 'issue' as const, issue, idx }))
+    }
+
+    if (!showProjectHeaders) {
+      return filteredIssues.map((issue, idx) => ({ kind: 'issue' as const, issue, idx }))
+    }
+
     const result: Array<
       | { kind: 'header'; project: string }
       | { kind: 'issue'; issue: LinearIssue; idx: number }
     > = []
     let lastProject: string | null = null
-    filtered.forEach((issue, idx) => {
+    filteredIssues.forEach((issue, idx) => {
       const proj = issue.project?.name ?? 'No Project'
       if (proj !== lastProject) {
         result.push({ kind: 'header', project: proj })
@@ -179,101 +294,173 @@ export function CommandPalette() {
       result.push({ kind: 'issue', issue, idx })
     })
     return result
-  }, [filtered, showProjectHeaders])
+  }, [mode, filteredCommands, filteredByIdentifier, filteredIssues, showProjectHeaders])
+
+  const placeholder =
+    mode === 'command' ? 'Run a command…' :
+    mode === 'identifier' ? 'Jump to identifier…' :
+    'Search issues, type > for commands, # for ID lookup'
+
+  const modeDot =
+    mode === 'command' ? 'bg-violet-500' :
+    mode === 'identifier' ? 'bg-amber-500' :
+    'bg-blue-500'
+
+  const modeLabel =
+    mode === 'command' ? 'Commands' :
+    mode === 'identifier' ? 'Identifier' :
+    'Issues'
+
+  const emptyIcon =
+    mode === 'command' ? <IconCommand /> :
+    mode === 'identifier' ? <IconHash /> :
+    <IconSearch />
+
+  const emptyHint =
+    mode === 'command' ? 'No commands matched' :
+    mode === 'identifier' ? 'No issue found with that identifier' :
+    'Try removing filters or different keywords'
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-24 px-4"
+      className="fixed inset-0 z-50 flex items-start justify-center px-4 animate-fade-in"
+      style={{ paddingTop: '20vh' }}
       onClick={() => setCommandPaletteOpen(false)}
     >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-md" />
 
-      {/* Panel */}
       <div
-        className="relative w-full max-w-xl bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden"
+        className="relative w-full max-w-2xl bg-gray-900 border border-gray-800 rounded-2xl shadow-pop overflow-hidden animate-scale-in"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Search input */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-800">
-          <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+        <div className="flex items-center gap-3 px-5 h-14 border-b border-gray-800">
+          <span className="text-gray-500 flex-shrink-0">
+            <IconSearch />
+          </span>
           <input
             ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search issues... (try p:high, s:started)"
-            className="flex-1 bg-transparent text-gray-100 placeholder-gray-600 text-sm focus:outline-none"
+            placeholder={placeholder}
+            className="flex-1 bg-transparent text-base text-gray-50 placeholder:text-gray-500 outline-none"
           />
-          <kbd className="text-xs text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700">Esc</kbd>
+          <Kbd large>⌘K</Kbd>
         </div>
 
-        {/* Results */}
-        <div className="max-h-80 overflow-y-auto">
+        <div className="max-h-[420px] overflow-y-auto py-2">
           {filtered.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-gray-600">
-              {query ? 'No issues match your search' : 'Start typing to search issues...'}
+            <div className="flex flex-col items-center justify-center py-14 gap-2">
+              <span className="text-gray-600">{emptyIcon}</span>
+              <span className="text-sm text-gray-400">No matches</span>
+              <span className="text-xs text-gray-500">{emptyHint}</span>
             </div>
           ) : (
-            renderItems.map((item, key) => {
-              if (item.kind === 'header') {
+            <>
+              {mode === 'command' && (
+                <div className="text-[10px] tracking-[0.14em] text-gray-500 font-medium px-5 pt-3 pb-1.5 uppercase">
+                  Commands
+                </div>
+              )}
+              {mode === 'identifier' && (
+                <div className="text-[10px] tracking-[0.14em] text-gray-500 font-medium px-5 pt-3 pb-1.5 uppercase">
+                  Identifier
+                </div>
+              )}
+              {renderItems.map((item, key) => {
+                if (item.kind === 'header') {
+                  return (
+                    <div
+                      key={`h-${item.project}-${key}`}
+                      className="text-[10px] tracking-[0.14em] text-gray-500 font-medium px-5 pt-3 pb-1.5 uppercase"
+                    >
+                      {item.project}
+                    </div>
+                  )
+                }
+
+                if (item.kind === 'command') {
+                  const cmd = item.cmd
+                  const idx = item.idx
+                  const selected = idx === selectedIdx
+                  return (
+                    <div
+                      key={cmd.id}
+                      className={`relative flex items-center gap-3 px-5 py-2.5 cursor-pointer transition-colors duration-150 ease-out-quart ${selected ? 'bg-violet-500/10 text-gray-50' : 'text-gray-300 hover:bg-gray-800/40'}`}
+                      onClick={() => handleSelectCommand(cmd)}
+                      onMouseEnter={() => setSelectedIdx(idx)}
+                    >
+                      {selected && (
+                        <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-violet-500" />
+                      )}
+                      <span className={selected ? 'text-violet-400' : 'text-gray-500'}>
+                        <IconCommand />
+                      </span>
+                      <span className="flex-1 flex flex-col gap-0.5 min-w-0">
+                        <span className="text-sm font-medium leading-none">{cmd.label}</span>
+                        <span className="text-xs text-gray-500 leading-none mt-1">{cmd.desc}</span>
+                      </span>
+                    </div>
+                  )
+                }
+
+                const issue = item.issue
+                const idx = item.idx
+                const selected = idx === selectedIdx
+                const stateColor = STATE_COLORS[issue.state.type] || '#6B7280'
+                const openInTab = isOpenInTab(issue)
                 return (
                   <div
-                    key={`h-${item.project}-${key}`}
-                    className="px-4 py-1 bg-gray-900/80 text-xs uppercase tracking-wider text-gray-600 border-t border-gray-800"
+                    key={issue.id}
+                    className={`relative flex items-center gap-3 px-5 py-2.5 cursor-pointer transition-colors duration-150 ease-out-quart ${selected ? 'bg-violet-500/10 text-gray-50' : 'text-gray-300 hover:bg-gray-800/40'}`}
+                    onClick={() => handleSelectIssue(issue)}
+                    onMouseEnter={() => setSelectedIdx(idx)}
                   >
-                    {item.project}
-                  </div>
-                )
-              }
-              const issue = item.issue
-              const idx = item.idx
-              const stateColor = STATE_COLORS[issue.state.type] || '#6B7280'
-              const openInTab = isOpenInTab(issue)
-              return (
-                <div
-                  key={issue.id}
-                  className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${
-                    idx === selectedIdx ? 'bg-indigo-600/20' : 'hover:bg-gray-800/50'
-                  }`}
-                  onClick={() => handleSelect(issue)}
-                  onMouseEnter={() => setSelectedIdx(idx)}
-                >
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: stateColor }}
-                  />
-                  <span className="font-mono text-xs text-gray-500 flex-shrink-0 w-16">{issue.identifier}</span>
-                  <span className="flex-1 text-sm text-gray-200 truncate">{issue.title}</span>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    {openInTab && (
-                      <span className="text-xs text-indigo-400 bg-indigo-900/40 px-1.5 py-0.5 rounded">open</span>
+                    {selected && (
+                      <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-violet-500" />
                     )}
                     <span
-                      className="text-xs px-2 py-0.5 rounded-full border"
-                      style={{
-                        borderColor: stateColor + '60',
-                        backgroundColor: stateColor + '20',
-                        color: stateColor
-                      }}
-                    >
-                      {issue.state.name}
-                    </span>
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: stateColor }}
+                    />
+                    <span className="font-mono text-xs text-gray-500 flex-shrink-0 w-16">{issue.identifier}</span>
+                    <span className="flex-1 text-sm truncate">{issue.title}</span>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {openInTab && (
+                        <Kbd>open</Kbd>
+                      )}
+                      <span
+                        className="text-[11px] px-1.5 py-0.5 rounded border font-mono"
+                        style={{
+                          borderColor: stateColor + '50',
+                          backgroundColor: stateColor + '18',
+                          color: stateColor
+                        }}
+                      >
+                        {issue.state.name}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              )
-            })
+                )
+              })}
+            </>
           )}
         </div>
 
-        {/* Footer hint */}
-        <div className="px-4 py-2 border-t border-gray-800 flex items-center gap-4 text-xs text-gray-600">
-          <span><kbd className="bg-gray-800 px-1 py-0.5 rounded border border-gray-700">↑↓</kbd> navigate</span>
-          <span><kbd className="bg-gray-800 px-1 py-0.5 rounded border border-gray-700">↵</kbd> open</span>
-          <span><kbd className="bg-gray-800 px-1 py-0.5 rounded border border-gray-700">Esc</kbd> close</span>
+        <div className="h-9 px-5 flex items-center justify-between border-t border-gray-800 text-[11px] text-gray-500">
+          <div className="flex items-center gap-2">
+            <span className={`w-1.5 h-1.5 rounded-full ${modeDot}`} />
+            <span>{modeLabel}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Kbd>↑↓</Kbd>
+            <span>navigate</span>
+            <Kbd>↵</Kbd>
+            <span>open</span>
+            <Kbd>esc</Kbd>
+            <span>close</span>
+          </div>
         </div>
       </div>
     </div>

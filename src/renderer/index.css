@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+  background: #0d0d0f;
+  color: #f5f5f7;
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.005em;
+}
+
+@supports (font-variation-settings: normal) {
+  html, body, #root {
+    font-family: 'Inter var', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  }
+}
+
+::selection { background: rgba(139, 92, 246, 0.3); color: #f5f5f7; }
+
+/* Elegant scrollbar */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #26262b; border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: #33333a; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
+/* Loading skeleton shimmer */
+.skeleton {
+  background: linear-gradient(90deg, #1c1c1f 0%, #26262b 50%, #1c1c1f 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2.4s linear infinite;
+}
+
+/* Subtle focus ring — violet accent */
+*:focus-visible {
+  outline: 2px solid rgba(139, 92, 246, 0.6);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+button, [role="button"] { -webkit-app-region: no-drag; }

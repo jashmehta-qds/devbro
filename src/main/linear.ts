@@ -21,15 +21,16 @@ export function getLinearClient(): LinearClient {
 }
 
 async function serializeIssue(issue: any, projectOverride?: { id: string; name: string; description?: string }) {
-  const state = await issue.state
-  const assignee = await issue.assignee
-  const project = projectOverride ?? (await issue.project ? { id: (await issue.project).id, name: (await issue.project).name, description: (await issue.project).description ?? undefined } : undefined)
-  const labels = await issue.labels()
+  const [state, assigneeRaw, projectRaw, labels, cycleRaw, milestoneRaw] = await Promise.all([
+    issue.state,
+    issue.assignee,
+    projectOverride ? Promise.resolve(null) : issue.project,
+    issue.labels(),
+    issue.cycle.catch(() => null),
+    issue.projectMilestone.catch(() => null),
+  ])
 
-  let cycleId: string | null = null
-  let milestoneId: string | null = null
-  try { const cycle = await issue.cycle; cycleId = cycle?.id ?? null } catch {}
-  try { const milestone = await issue.projectMilestone; milestoneId = milestone?.id ?? null } catch {}
+  const project = projectOverride ?? (projectRaw ? { id: projectRaw.id, name: projectRaw.name, description: projectRaw.description ?? undefined } : undefined)
 
   return {
     id: issue.id,
@@ -41,16 +42,16 @@ async function serializeIssue(issue: any, projectOverride?: { id: string; name: 
     state: state
       ? { id: state.id, name: state.name, color: state.color, type: state.type }
       : { id: '', name: 'Unknown', color: '#888888', type: 'started' },
-    assignee: assignee
-      ? { id: assignee.id, name: assignee.name, email: assignee.email, avatarUrl: assignee.avatarUrl ?? undefined }
+    assignee: assigneeRaw
+      ? { id: assigneeRaw.id, name: assigneeRaw.name, email: assigneeRaw.email, avatarUrl: assigneeRaw.avatarUrl ?? undefined }
       : undefined,
     project,
     createdAt: issue.createdAt.toISOString(),
     updatedAt: issue.updatedAt.toISOString(),
     url: issue.url,
     labels: labels.nodes.map((l: any) => ({ id: l.id, name: l.name, color: l.color })),
-    cycleId,
-    milestoneId,
+    cycleId: cycleRaw?.id ?? null,
+    milestoneId: milestoneRaw?.id ?? null,
   }
 }
 

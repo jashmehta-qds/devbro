@@ -7,6 +7,10 @@ declare global {
   }
 }
 
+// ponytail: 60s stale window prevents refresh-spam. Bypass with force=true.
+let _lastProjectsFetch = 0
+const PROJECTS_STALE_MS = 60_000
+
 export function useLinear() {
   const {
     setProjects,
@@ -20,7 +24,7 @@ export function useLinear() {
     toggleProjectExpanded
   } = useAppStore()
 
-  const loadProjects = useCallback(async () => {
+  const loadProjects = useCallback(async (force = false) => {
     setLoading(true)
     setError(null)
     try {
@@ -40,6 +44,12 @@ export function useLinear() {
           }
         }
       }
+
+      if (!force && Date.now() - _lastProjectsFetch < PROJECTS_STALE_MS) {
+        setIsSyncing(false)
+        return
+      }
+      _lastProjectsFetch = Date.now()
 
       // 2. Fetch from Linear in background
       const fresh = await window.api.linear.getProjects()

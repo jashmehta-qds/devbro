@@ -20,7 +20,13 @@
       "out/**/*"
     ]
   },
-  "keywords": ["developer-tools", "linear", "jira", "asana", "claude"],
+  "keywords": [
+    "developer-tools",
+    "linear",
+    "jira",
+    "asana",
+    "claude"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {

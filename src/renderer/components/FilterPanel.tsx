@@ -71,7 +71,7 @@ function PillButton({
         danger
           ? 'bg-red-900/40 text-red-300 border-red-700/60'
           : active
-          ? 'bg-indigo-600/30 text-indigo-300 border-indigo-600/50'
+          ? 'bg-violet-600/30 text-violet-300 border-violet-600/50'
           : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800 border-transparent'
       }`}
     >
@@ -86,7 +86,7 @@ function Section({ title, badge, children }: { title: string; badge?: string; ch
       <div className="flex items-center gap-1.5 mb-1.5">
         <span className="text-xs font-medium text-gray-400">{title}</span>
         {badge && (
-          <span className="text-[10px] px-1 py-0 rounded bg-indigo-900/40 text-indigo-400 border border-indigo-800/50 leading-4">
+          <span className="text-[10px] px-1 py-0 rounded bg-violet-900/40 text-violet-400 border border-violet-800/50 leading-4">
             {badge}
           </span>
         )}
@@ -125,7 +125,7 @@ export function FilterPanel({ filters, onChange, onClose, connectorType, cycles,
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-gray-200 tracking-wider uppercase">Filters</span>
           {count > 0 && (
-            <span className="text-[10px] bg-indigo-600 text-white rounded-full w-4 h-4 flex items-center justify-center font-bold">
+            <span className="text-[10px] bg-violet-600 text-white rounded-full w-4 h-4 flex items-center justify-center font-bold">
               {count}
             </span>
           )}
@@ -238,11 +238,11 @@ export function FilterPanel({ filters, onChange, onClose, connectorType, cycles,
                         onClick={() => set('milestoneFilter', filters.milestoneFilter === m.id ? 'any' : m.id)}
                         className={`flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors text-left ${
                           filters.milestoneFilter === m.id
-                            ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-600/40'
+                            ? 'bg-violet-600/20 text-violet-300 border border-violet-600/40'
                             : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200 border border-transparent'
                         }`}
                       >
-                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${filters.milestoneFilter === m.id ? 'bg-indigo-400' : 'bg-gray-600'}`} />
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${filters.milestoneFilter === m.id ? 'bg-violet-400' : 'bg-gray-600'}`} />
                         <span className="truncate">{m.name}</span>
                         {m.projectName && (
                           <span className="text-gray-600 text-[10px] truncate ml-auto flex-shrink-0">{m.projectName}</span>

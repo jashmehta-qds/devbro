@@ -187,4 +187,17 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener('app:memoryKill', listener)
     },
   },
+
+  ai: {
+    onChunk: (callback: (payload: { callId: string; text: string }) => void) => {
+      const listener = (_event: any, payload: any) => callback(payload)
+      ipcRenderer.on('ai:chunk', listener)
+      return () => ipcRenderer.removeListener('ai:chunk', listener)
+    },
+    onDone: (callback: (payload: { callId: string; output: string; ok: boolean }) => void) => {
+      const listener = (_event: any, payload: any) => callback(payload)
+      ipcRenderer.on('ai:done', listener)
+      return () => ipcRenderer.removeListener('ai:done', listener)
+    },
+  },
 })

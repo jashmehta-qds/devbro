@@ -27,6 +27,7 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
   const [previewLoading, setPreviewLoading] = useState<boolean>(false)
   const [previewExpanded, setPreviewExpanded] = useState<boolean>(false)
   const [refreshFeedback, setRefreshFeedback] = useState<boolean>(false)
+  const [terminalReady, setTerminalReady] = useState<boolean>(false)
 
   const loadPreview = useCallback(async () => {
     if (!selectedIssue) return
@@ -67,88 +68,102 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
   useEffect(() => {
     if (!containerRef.current) return
 
-    const term = new Terminal({
-      theme: {
-        background: '#0f1117',
-        foreground: '#e2e8f0',
-        cursor: '#6366f1',
-        cursorAccent: '#0f1117',
-        black: '#1a1f2e',
-        red: '#f87171',
-        green: '#4ade80',
-        yellow: '#facc15',
-        blue: '#60a5fa',
-        magenta: '#c084fc',
-        cyan: '#22d3ee',
-        white: '#e2e8f0',
-        brightBlack: '#374151',
-        brightRed: '#fca5a5',
-        brightGreen: '#86efac',
-        brightYellow: '#fde047',
-        brightBlue: '#93c5fd',
-        brightMagenta: '#d8b4fe',
-        brightCyan: '#67e8f9',
-        brightWhite: '#f9fafb'
-      },
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, monospace",
-      fontSize: 13,
-      lineHeight: 1.4,
-      cursorBlink: true,
-      scrollback: 1000,
-      allowProposedApi: true
-    })
+    let cancelled = false
 
-    const fitAddon = new FitAddon()
-    const webLinksAddon = new WebLinksAddon()
+    Promise.all([
+      window.api.appConfig.get('terminal_font_size'),
+      window.api.appConfig.get('terminal_scrollback'),
+    ]).then(([fontSizeRaw, scrollbackRaw]) => {
+      if (cancelled || !containerRef.current) return
 
-    term.loadAddon(fitAddon)
-    term.loadAddon(webLinksAddon)
+      const fontSize = parseInt(fontSizeRaw ?? '14', 10) || 14
+      const scrollback = parseInt(scrollbackRaw ?? '2000', 10) || 2000
 
-    term.open(containerRef.current)
-    fitAddon.fit()
+      const term = new Terminal({
+        theme: {
+          background: '#0f1117',
+          foreground: '#e2e8f0',
+          cursor: '#8b5cf6',
+          cursorAccent: '#0f1117',
+          black: '#1a1f2e',
+          red: '#f87171',
+          green: '#4ade80',
+          yellow: '#facc15',
+          blue: '#60a5fa',
+          magenta: '#c084fc',
+          cyan: '#22d3ee',
+          white: '#e2e8f0',
+          brightBlack: '#374151',
+          brightRed: '#fca5a5',
+          brightGreen: '#86efac',
+          brightYellow: '#fde047',
+          brightBlue: '#93c5fd',
+          brightMagenta: '#d8b4fe',
+          brightCyan: '#67e8f9',
+          brightWhite: '#f9fafb'
+        },
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, monospace",
+        fontSize,
+        lineHeight: 1.4,
+        cursorBlink: true,
+        scrollback,
+        allowProposedApi: true
+      })
 
-    terminalRef.current = term
-    fitAddonRef.current = fitAddon
-    xtermRef.current = term
+      const fitAddon = new FitAddon()
+      const webLinksAddon = new WebLinksAddon()
 
-    // Store the dispose handle so we can clean up properly
-    const onDataDisposable = term.onData((data) => {
-      if (sessionIdRef.current) {
-        window.api.terminal.write(sessionIdRef.current, data)
+      term.loadAddon(fitAddon)
+      term.loadAddon(webLinksAddon)
+
+      term.open(containerRef.current)
+      fitAddon.fit()
+
+      terminalRef.current = term
+      fitAddonRef.current = fitAddon
+      xtermRef.current = term
+      setTerminalReady(true)
+
+      const onDataDisposable = term.onData((data) => {
+        if (sessionIdRef.current) {
+          window.api.terminal.write(sessionIdRef.current, data)
+        }
+      })
+
+      const resizeObserver = new ResizeObserver(() => {
+        requestAnimationFrame(() => {
+          if (!fitAddon || !term) return
+          try {
+            fitAddon.fit()
+            const { cols, rows } = term
+            if (sessionIdRef.current) {
+              window.api.terminal.resize(sessionIdRef.current, cols, rows)
+            }
+          } catch {
+            // ignore
+          }
+        })
+      })
+
+      if (containerRef.current) {
+        resizeObserver.observe(containerRef.current)
       }
     })
 
-    const resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(() => {
-        if (!fitAddon || !term) return
-        try {
-          fitAddon.fit()
-          const { cols, rows } = term
-          if (sessionIdRef.current) {
-            window.api.terminal.resize(sessionIdRef.current, cols, rows)
-          }
-        } catch {
-          // ignore
-        }
-      })
-    })
-
-    if (containerRef.current) {
-      resizeObserver.observe(containerRef.current)
-    }
-
     return () => {
-      resizeObserver.disconnect()
-      onDataDisposable.dispose() // unsubscribe before dispose to prevent listener leak
-      term.dispose()
-      terminalRef.current = null
-      fitAddonRef.current = null
-      xtermRef.current = null
+      cancelled = true
+      if (terminalRef.current) {
+        terminalRef.current.dispose()
+        terminalRef.current = null
+        fitAddonRef.current = null
+        xtermRef.current = null
+      }
+      setTerminalReady(false)
     }
   }, [])
 
   useEffect(() => {
-    if (terminalSessionId && terminalRef.current) {
+    if (terminalSessionId && terminalReady && terminalRef.current) {
       // Tell main we're rendering this session — pty output streams via IPC.
       // While detached, main drops output into a small ring buffer instead.
       window.api.terminal.attach(terminalSessionId).catch(() => {})
@@ -160,7 +175,7 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
         window.api.terminal.detach(terminalSessionId).catch(() => {})
       }
     }
-  }, [terminalSessionId])
+  }, [terminalSessionId, terminalReady])
 
   const handleOpenTerminal = useCallback(async () => {
     if (terminalRef.current) {
@@ -186,15 +201,15 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
     : 'terminal'
 
   return (
-    <div className="flex flex-col h-full bg-gray-950 border-l border-gray-800">
+    <div className="flex flex-col h-full bg-gray-950 border-t border-gray-800">
       {/* Terminal header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800 bg-gray-900 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-800 bg-gray-950 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-gray-400 font-mono">{headerLabel}</span>
+          <span className="text-[11px] font-mono uppercase tracking-[0.14em] text-gray-400">{headerLabel}</span>
           {terminalSessionId && (
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
             </span>
           )}
         </div>
@@ -203,17 +218,17 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
             <>
               <button
                 onClick={handleClear}
-                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                className="h-6 px-2 rounded text-[11px] text-gray-400 hover:text-gray-100 hover:bg-gray-900 transition-colors"
               >
                 Clear
               </button>
               {selectedIssue && (
                 <button
                   onClick={handleRefreshContext}
-                  className={`text-xs transition-colors ${
+                  className={`h-6 px-2 rounded text-[11px] transition-colors ${
                     refreshFeedback
-                      ? 'text-green-400'
-                      : 'text-indigo-400 hover:text-indigo-300'
+                      ? 'text-emerald-300'
+                      : 'text-gray-400 hover:text-gray-100 hover:bg-gray-900'
                   }`}
                   title="Rewrite CLAUDE.md for this session"
                 >
@@ -222,7 +237,7 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
               )}
               <button
                 onClick={() => window.api.terminal.kill(terminalSessionId)}
-                className="text-xs text-red-500 hover:text-red-400 transition-colors"
+                className="h-6 px-2 rounded text-[11px] text-gray-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
               >
                 Kill
               </button>
@@ -230,7 +245,7 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
           )}
           <button
             onClick={handleClose}
-            className="text-gray-600 hover:text-gray-300 transition-colors text-xs ml-1"
+            className="h-6 px-2 rounded text-[11px] text-gray-400 hover:text-gray-100 hover:bg-gray-900 transition-colors"
           >
             ✕
           </button>
@@ -240,29 +255,24 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
       {/* Terminal container */}
       <div className="flex-1 overflow-hidden relative" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.03)' }}>
         {!terminalSessionId && !selectedIssue && (
-          <div className="absolute inset-0 flex items-center justify-center text-gray-600 text-sm">
+          <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">
             Select a ticket to open terminal
           </div>
         )}
         {!terminalSessionId && selectedIssue && (
-          <div className="absolute inset-0 overflow-y-auto p-5 flex flex-col gap-4">
+          <div className="absolute inset-0 overflow-y-auto p-6 flex flex-col gap-4">
             {/* Context preview — collapsed by default */}
-            <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
+            <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-soft">
               <button
                 onClick={() => setPreviewExpanded((v) => !v)}
-                className="w-full flex items-center justify-between px-3 py-2 text-xs text-gray-400 hover:text-gray-200 transition-colors"
+                className="w-full flex items-center justify-between px-4 py-3 text-xs text-gray-300 hover:text-gray-50 transition-colors"
               >
-                <span className="flex items-center gap-2">
-                  <svg className="w-3.5 h-3.5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  CLAUDE.md Preview
-                </span>
+                <span className="text-[11px] font-mono uppercase tracking-[0.14em] text-gray-400">CLAUDE.md Preview</span>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={(e) => { e.stopPropagation(); loadPreview() }}
                     disabled={previewLoading}
-                    className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors"
+                    className="text-[11px] text-violet-300 hover:text-violet-200 disabled:opacity-50 transition-colors"
                   >
                     {previewLoading ? 'Loading…' : 'Refresh'}
                   </button>
@@ -270,7 +280,7 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
                 </div>
               </button>
               {previewExpanded && (
-                <pre className="whitespace-pre-wrap text-xs text-gray-400 font-mono bg-gray-950 p-3 max-h-60 overflow-y-auto border-t border-gray-800">
+                <pre className="whitespace-pre-wrap text-[11px] text-gray-300 font-mono bg-gray-950 p-4 max-h-72 overflow-y-auto border-t border-gray-800 leading-relaxed">
                   {previewLoading
                     ? 'Loading preview…'
                     : previewText || '(empty)'}
@@ -282,19 +292,19 @@ export function TerminalPanel({ onClose }: TerminalPanelProps) {
             <div className="flex-1 flex flex-col items-center justify-center gap-3">
               <button
                 onClick={handleOpenTerminal}
-                className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition-colors font-medium shadow-lg shadow-indigo-900/30"
+                className="inline-flex items-center gap-2 px-5 h-10 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors shadow-elev"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-4 h-4 stroke-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
                 Start Claude ▶
               </button>
-              <p className="text-xs text-gray-600">Opens a new Claude Code session for this ticket</p>
+              <p className="text-[11px] text-gray-500 mt-2">Opens a new Claude Code session for this ticket</p>
             </div>
           </div>
         )}
-        <div ref={containerRef} className="w-full h-full p-1" />
+        <div ref={containerRef} className="w-full h-full p-3" />
       </div>
     </div>
   )

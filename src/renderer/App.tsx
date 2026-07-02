@@ -8,13 +8,21 @@ import { ProjectView } from './components/ProjectView'
 import { TabBar } from './components/TabBar'
 import { CommandPalette } from './components/CommandPalette'
 import { StandupModal } from './components/StandupModal'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { useAppStore } from './store'
 import { useTerminal } from './hooks/useTerminal'
 
-const TERMINAL_MIN = 280
-const TERMINAL_MAX = 1100
-const TERMINAL_DEFAULT = 420
+const TERMINAL_MIN = 160
+const TERMINAL_DEFAULT = 300
 const SIDEBAR_COLLAPSED_KEY = 'devbro-sidebar-collapsed'
+const TERMINAL_HEIGHT_KEY = 'devbro-terminal-height'
+
+function loadTerminalHeight(): number {
+  try {
+    const v = localStorage.getItem(TERMINAL_HEIGHT_KEY)
+    return v ? parseInt(v, 10) || TERMINAL_DEFAULT : TERMINAL_DEFAULT
+  } catch { return TERMINAL_DEFAULT }
+}
 
 function loadSidebarCollapsed(): boolean {
   try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true' } catch { return false }
@@ -55,10 +63,10 @@ export default function App() {
   useEffect(() => { selectedIssueRef.current = selectedIssue }, [selectedIssue])
   useEffect(() => { terminalOpenRef.current = terminalOpen }, [terminalOpen])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed)
-  const [terminalWidth, setTerminalWidth] = useState(TERMINAL_DEFAULT)
+  const [terminalHeight, setTerminalHeight] = useState(loadTerminalHeight)
   const dragging = useRef(false)
-  const startX = useRef(0)
-  const startWidth = useRef(0)
+  const startY = useRef(0)
+  const startHeight = useRef(0)
 
   const handleCloseTerminal = useCallback(async () => {
     await closeTerminal()
@@ -66,18 +74,19 @@ export default function App() {
 
   const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
     dragging.current = true
-    startX.current = e.clientX
-    startWidth.current = terminalWidth
+    startY.current = e.clientY
+    startHeight.current = terminalHeight
     e.preventDefault()
-  }, [terminalWidth])
+  }, [terminalHeight])
 
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (!dragging.current) return
-      // Dragging left increases terminal width
-      const delta = startX.current - e.clientX
-      const next = Math.min(TERMINAL_MAX, Math.max(TERMINAL_MIN, startWidth.current + delta))
-      setTerminalWidth(next)
+      const delta = startY.current - e.clientY
+      const max = window.innerHeight * 0.7
+      const next = Math.min(max, Math.max(TERMINAL_MIN, startHeight.current + delta))
+      setTerminalHeight(next)
+      try { localStorage.setItem(TERMINAL_HEIGHT_KEY, String(Math.round(next))) } catch {}
     }
     const onMouseUp = () => { dragging.current = false }
     window.addEventListener('mousemove', onMouseMove)
@@ -229,9 +238,12 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = window.api.terminal.onAnyExit(({ sessionId, evicted }) => {
       const list = tabsRef.current
+      // Only collapse the panel if another tab still has a live terminal —
+      // otherwise leave it visible so the user can read the final output.
+      const otherTerminalOpen = list.some(t => t.terminalSessionId && t.terminalSessionId !== sessionId)
       for (const t of list) {
         if (t.terminalSessionId === sessionId) {
-          updateTabRef.current(t.id, { terminalSessionId: null, terminalOpen: false })
+          updateTabRef.current(t.id, { terminalSessionId: null, terminalOpen: !otherTerminalOpen })
           if (evicted) {
             addNotificationRef.current(`${t.issue?.identifier || 'Session'} closed — only one Claude session can run at a time`)
           }
@@ -253,7 +265,7 @@ export default function App() {
         <div style={{ WebkitAppRegion: 'no-drag', width: 80 } as React.CSSProperties} />
         {/* App name centred */}
         <span className="flex-1 text-center text-xs text-gray-500 font-bold tracking-widest pointer-events-none flex items-center justify-center gap-1.5 uppercase">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block" />
+          <span className="w-1.5 h-1.5 rounded-full bg-violet-500 inline-block" />
           devbro
         </span>
         <div style={{ width: 80 } as React.CSSProperties} />
@@ -266,28 +278,48 @@ export default function App() {
           className="flex-shrink-0 flex flex-col transition-all duration-200"
           style={{ width: sidebarCollapsed ? 48 : 256 }}
         >
-          <Sidebar
-            collapsed={sidebarCollapsed}
-            onToggleCollapse={() => {
-              setSidebarCollapsed(c => {
-                const next = !c
-                try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next)) } catch {}
-                return next
-              })
-            }}
-          />
+          <ErrorBoundary label="Sidebar">
+            <Sidebar
+              collapsed={sidebarCollapsed}
+              onToggleCollapse={() => {
+                setSidebarCollapsed(c => {
+                  const next = !c
+                  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next)) } catch {}
+                  return next
+                })
+              }}
+            />
+          </ErrorBoundary>
         </div>
 
         {/* Main content */}
         <div className="flex-1 flex overflow-hidden min-w-0 flex-col">
           {/* Tab bar */}
-          <TabBar />
+          <ErrorBoundary label="TabBar">
+            <TabBar />
+          </ErrorBoundary>
 
-        {/* Content row */}
-        <div className="flex-1 flex overflow-hidden min-w-0">
+        {/* Content column */}
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           {/* Ticket view or Settings or Dashboard */}
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-            {settingsOpen ? <ProjectConfigPanel /> : dashboardOpen ? <AnalyticsDashboard /> : activeProjectId ? <ProjectView /> : <TicketView />}
+            <ErrorBoundary label="TicketView">
+              {settingsOpen ? (
+                <ErrorBoundary label="ProjectConfigPanel">
+                  <ProjectConfigPanel />
+                </ErrorBoundary>
+              ) : dashboardOpen ? (
+                <ErrorBoundary label="AnalyticsDashboard">
+                  <AnalyticsDashboard />
+                </ErrorBoundary>
+              ) : activeProjectId ? (
+                <ErrorBoundary label="ProjectView">
+                  <ProjectView />
+                </ErrorBoundary>
+              ) : (
+                <TicketView />
+              )}
+            </ErrorBoundary>
           </div>
 
           {/* Drag divider + terminal panel */}
@@ -295,11 +327,13 @@ export default function App() {
             <>
               <div
                 onMouseDown={onDividerMouseDown}
-                className="w-1 flex-shrink-0 bg-gray-800 hover:bg-indigo-500 cursor-col-resize transition-colors active:bg-indigo-400"
+                className="h-1 flex-shrink-0 bg-gray-800 hover:bg-violet-500/40 cursor-row-resize transition-colors"
                 title="Drag to resize"
               />
-              <div className="flex-shrink-0 flex flex-col" style={{ width: terminalWidth }}>
-                <TerminalPanel onClose={handleCloseTerminal} />
+              <div className="flex-shrink-0 flex flex-col" style={{ height: terminalHeight }}>
+                <ErrorBoundary label="TerminalPanel">
+                  <TerminalPanel onClose={handleCloseTerminal} />
+                </ErrorBoundary>
               </div>
             </>
           )}
@@ -308,10 +342,18 @@ export default function App() {
       </div>
 
       {/* Command Palette overlay */}
-      {commandPaletteOpen && <CommandPalette />}
+      {commandPaletteOpen && (
+        <ErrorBoundary label="CommandPalette">
+          <CommandPalette />
+        </ErrorBoundary>
+      )}
 
       {/* Standup Modal overlay */}
-      {standupOpen && <StandupModal onClose={() => setStandupOpen(false)} />}
+      {standupOpen && (
+        <ErrorBoundary label="StandupModal">
+          <StandupModal onClose={() => setStandupOpen(false)} />
+        </ErrorBoundary>
+      )}
 
       {/* Notification stack */}
       <div className="fixed bottom-4 right-4 z-50 space-y-2 flex flex-col items-end">

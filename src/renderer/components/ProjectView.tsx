@@ -24,7 +24,7 @@ function Avatar({ name, avatarUrl }: { name: string; avatarUrl: string | null })
     return <img src={avatarUrl} alt={name} className="w-6 h-6 rounded-full object-cover" />
   }
   return (
-    <div className="w-6 h-6 rounded-full bg-indigo-700 flex items-center justify-center text-xs text-white font-medium flex-shrink-0">
+    <div className="w-6 h-6 rounded-full bg-violet-700 flex items-center justify-center text-xs text-white font-medium flex-shrink-0">
       {name.charAt(0).toUpperCase()}
     </div>
   )
@@ -160,7 +160,7 @@ function ReposSection({ projectId }: { projectId: string }) {
             <select
               value={selected}
               onChange={e => setSelected(e.target.value)}
-              className="bg-gray-800 border border-gray-700 rounded-md px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-indigo-500"
+              className="bg-gray-800 border border-gray-700 rounded-md px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-violet-500"
             >
               <option value="">Select folder…</option>
               {allDirs.map(d => <option key={d} value={d}>{d}</option>)}
@@ -168,7 +168,7 @@ function ReposSection({ projectId }: { projectId: string }) {
             <button
               onClick={handleAdd}
               disabled={!selected || adding}
-              className="px-3 py-1 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-md transition-colors"
+              className="px-3 py-1 text-xs bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-md transition-colors"
             >
               Link
             </button>
@@ -251,7 +251,7 @@ export function ProjectView() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: project?.color ?? '#6366f1' }} />
+          <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: project?.color ?? '#8b5cf6' }} />
           <h2 className="text-base font-semibold text-gray-100 flex-1 truncate">{displayName}</h2>
           <div className="flex items-center gap-2 flex-shrink-0">
             {details?.url && (
@@ -259,7 +259,7 @@ export function ProjectView() {
                 href={details.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                className="text-xs text-violet-400 hover:text-violet-300 transition-colors"
               >
                 View in Linear ↗
               </a>
@@ -305,7 +305,7 @@ export function ProjectView() {
                 <p className="text-xs text-gray-500 mb-1">Progress</p>
                 <div className="flex items-center gap-2">
                   <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                    <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${progressPct}%` }} />
+                    <div className="h-full bg-violet-500 rounded-full" style={{ width: `${progressPct}%` }} />
                   </div>
                   <span className="text-sm font-medium text-gray-200">{progressPct}%</span>
                 </div>
@@ -414,7 +414,7 @@ export function ProjectView() {
                   {sortedMilestones.map((m) => (
                     <div key={m.id} className="bg-gray-800 border border-gray-700 rounded-lg p-4">
                       <div className="flex items-start gap-2">
-                        <span className="mt-1 w-2 h-2 rounded-full bg-indigo-400 flex-shrink-0" />
+                        <span className="mt-1 w-2 h-2 rounded-full bg-violet-400 flex-shrink-0" />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-200">{m.name}</p>
                           {m.targetDate && (

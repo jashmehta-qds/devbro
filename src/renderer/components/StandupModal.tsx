@@ -18,10 +18,23 @@ export function StandupModal({ onClose }: { onClose: () => void }) {
   const [result, setResult] = useState<{ standup: string; raw: string; usedAI: boolean } | null>(null)
   const [copied, setCopied] = useState(false)
   const [showRaw, setShowRaw] = useState(false)
+  const [streamingText, setStreamingText] = useState('')
+
+  // Subscribe to AI streaming while generating
+  useEffect(() => {
+    if (!loading) return
+    const offChunk = window.api.ai.onChunk(({ text }) => setStreamingText(prev => prev + text))
+    const offDone = window.api.ai.onDone(({ output, ok }) => {
+      if (ok) setStreamingText(output)
+      offChunk(); offDone()
+    })
+    return () => { offChunk(); offDone() }
+  }, [loading])
 
   const generate = useCallback(async () => {
     setLoading(true)
     setResult(null)
+    setStreamingText('')
     try {
       const r = await window.api.standup.generate()
       setResult(r)
@@ -59,13 +72,13 @@ export function StandupModal({ onClose }: { onClose: () => void }) {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
           <div className="flex items-center gap-2">
-            <svg className="w-4 h-4 text-indigo-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-4 h-4 text-violet-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
             </svg>
             <span className="text-sm font-semibold text-gray-100">Daily Standup</span>
             {result?.usedAI && (
-              <span className="text-xs bg-indigo-900/60 text-indigo-300 border border-indigo-700 rounded px-1.5 py-0.5">
+              <span className="text-xs bg-violet-900/60 text-violet-300 border border-violet-700 rounded px-1.5 py-0.5">
                 AI
               </span>
             )}
@@ -98,12 +111,16 @@ export function StandupModal({ onClose }: { onClose: () => void }) {
         {/* Content */}
         <div className="px-4 py-4 max-h-96 overflow-y-auto">
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-10 gap-3">
-              <svg className="w-6 h-6 text-indigo-400 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              <p className="text-sm text-gray-400">Generating your standup...</p>
+            <div className="text-sm leading-relaxed">
+              {streamingText ? renderStandup(streamingText) : (
+                <div className="flex flex-col items-center justify-center py-10 gap-3">
+                  <svg className="w-6 h-6 text-violet-400 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <p className="text-sm text-gray-400">Generating your standup...</p>
+                </div>
+              )}
             </div>
           ) : result ? (
             <div className="text-sm leading-relaxed">
@@ -134,7 +151,7 @@ export function StandupModal({ onClose }: { onClose: () => void }) {
           <button
             onClick={handleCopy}
             disabled={loading || !result}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded transition-colors"
           >
             {copied ? (
               <>

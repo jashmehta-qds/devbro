@@ -9,6 +9,22 @@ import { getDb, getWorkDir } from './db'
 import { CONFIG_FILE } from './configLog'
 import { generateAndAppendProgress } from './progressSummary'
 
+// Revert CLAUDE.md to its git-tracked state (if tracked), then append context.
+// Prevents overwriting project rules that live in the committed CLAUDE.md.
+function writeContextToClaude(claudePath: string, contextContent: string): void {
+  const dir = path.dirname(claudePath)
+  // Restore the committed version if the file is tracked
+  try {
+    execSync('git checkout HEAD -- CLAUDE.md', { cwd: dir, stdio: 'ignore' })
+  } catch {
+    // Not tracked — wipe any leftover content so we start clean
+    try { fs.writeFileSync(claudePath, '', 'utf-8') } catch {}
+  }
+  const existing = fs.existsSync(claudePath) ? fs.readFileSync(claudePath, 'utf-8') : ''
+  const separator = existing.trimEnd().length > 0 ? '\n\n---\n\n' : ''
+  fs.writeFileSync(claudePath, existing.trimEnd() + separator + contextContent, 'utf-8')
+}
+
 interface PtySession {
   process: pty.IPty
   ticketId: string
@@ -32,7 +48,13 @@ interface PtySession {
 // switch, which got us to 40GB. One active session at a time is enforced —
 // switching to a different ticket and starting Claude there evicts the
 // previous session (its progress summary still runs on exit).
-const MAX_CONCURRENT_SESSIONS = 1
+function getMaxConcurrentSessions(): number {
+  try {
+    const row = getDb().prepare("SELECT value FROM app_config WHERE key = 'max_terminal_sessions'").get() as { value: string } | undefined
+    const v = parseInt(row?.value ?? '1', 10)
+    return Number.isFinite(v) && v >= 1 && v <= 5 ? v : 1
+  } catch { return 1 }
+}
 
 // Bounded replay buffer used while a session is detached (renderer not
 // rendering it). 16KB is plenty to recover the bottom of a screen on
@@ -107,9 +129,10 @@ function resolveCwd(ticketId: string, projectId: string | undefined, repoName: s
   }
   try {
     const db = getDb()
-    const row = projectId
-      ? db.prepare('SELECT repo_name FROM project_repos WHERE linear_project_id = ? ORDER BY created_at ASC LIMIT 1').get(projectId) as any
-      : null
+    // Look up by project, then fall back to ticket id (ponytail: same table,
+    // ticket-scoped rows for issues without a project).
+    const lookup = db.prepare('SELECT repo_name FROM project_repos WHERE linear_project_id = ? ORDER BY created_at ASC LIMIT 1')
+    const row = (projectId ? lookup.get(projectId) as any : null) ?? lookup.get(ticketId) as any
     if (row?.repo_name) {
       const repoPath = path.join(workDir, row.repo_name)
       if (fs.existsSync(repoPath)) return repoPath
@@ -123,10 +146,11 @@ function resolveCwd(ticketId: string, projectId: string | undefined, repoName: s
 // Evict the oldest session if we'd exceed the cap. Used before spawning a
 // new pty so we don't pile up Claude subprocesses across tabs.
 function evictOldestIfAtCap(win: BrowserWindow): void {
-  while (sessions.size >= MAX_CONCURRENT_SESSIONS) {
+  const maxSessions = getMaxConcurrentSessions()
+  while (sessions.size >= maxSessions) {
     const oldestId = sessions.keys().next().value
     if (!oldestId) break
-    console.log(`[pty] Concurrent cap hit (${sessions.size}/${MAX_CONCURRENT_SESSIONS}) — evicting oldest session ${oldestId}`)
+    console.log(`[pty] Concurrent cap hit (${sessions.size}/${maxSessions}) — evicting oldest session ${oldestId}`)
     const old = sessions.get(oldestId)
     try { old?.process.kill() } catch {}
     // Best-effort notify renderer; onExit will fire and do the rest.
@@ -153,8 +177,8 @@ export async function createTerminal(
   const home = process.env.HOME || os.homedir()
   const cwd = resolveCwd(ticketId, projectId, repoName)
 
-  // Write CLAUDE.md into the cwd so Claude picks it up automatically
-  fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), contextContent, 'utf-8')
+  // Revert CLAUDE.md to committed state then append ticket context
+  writeContextToClaude(path.join(cwd, 'CLAUDE.md'), contextContent)
 
   const storedSessionId = getStoredClaudeSessionId(ticketId)
 

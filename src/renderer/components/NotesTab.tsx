@@ -123,7 +123,7 @@ export function NotesTab({ ticketId }: NotesTabProps) {
               onClick={() => setViewMode('edit')}
               className={`px-2 py-1 text-xs transition-colors ${
                 viewMode === 'edit'
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-violet-600 text-white'
                   : 'text-gray-400 hover:text-gray-200'
               }`}
             >
@@ -133,7 +133,7 @@ export function NotesTab({ ticketId }: NotesTabProps) {
               onClick={() => setViewMode('preview')}
               className={`px-2 py-1 text-xs transition-colors ${
                 viewMode === 'preview'
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-violet-600 text-white'
                   : 'text-gray-400 hover:text-gray-200'
               }`}
             >
@@ -159,7 +159,7 @@ export function NotesTab({ ticketId }: NotesTabProps) {
           onChange={(e) => setLocalContent(e.target.value)}
           onBlur={saveNotes}
           placeholder="Write notes about this ticket... (Markdown supported)"
-          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg p-3 text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-indigo-500 font-mono resize-none leading-relaxed"
+          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg p-3 text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-violet-500 font-mono resize-none leading-relaxed"
         />
       ) : (
         <div className="flex-1 overflow-y-auto bg-gray-800/50 border border-gray-700 rounded-lg p-4">
@@ -178,7 +178,7 @@ export function NotesTab({ ticketId }: NotesTabProps) {
         <button
           onClick={saveNotes}
           disabled={saving}
-          className="px-3 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          className="px-3 py-1 bg-violet-600 text-white rounded text-xs hover:bg-violet-700 disabled:opacity-50 transition-colors"
         >
           Save
         </button>

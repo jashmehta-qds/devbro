@@ -17,15 +17,16 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { writeGlobalConfigFile } from './configLog'
-import Anthropic from '@anthropic-ai/sdk'
+import { runClaudeStreaming } from './claudeCli'
 
-function getAnthropicClient(): Anthropic | null {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return null
-  return new Anthropic({ apiKey })
-}
+let handlersRegistered = false
+let currentWin: BrowserWindow | null = null
+let pollIntervalId: ReturnType<typeof setInterval> | null = null
 
 export function registerIpcHandlers(win: BrowserWindow): void {
+  currentWin = win
+  if (handlersRegistered) return
+  handlersRegistered = true
   // ============================================================
   // Connector management handlers
   // ============================================================
@@ -248,9 +249,6 @@ export function registerIpcHandlers(win: BrowserWindow): void {
 
   ipcMain.handle('progress:generateManual', async (_event, ticketId: string) => {
     const { execSync } = await import('child_process')
-    const fsM = await import('fs')
-    const pathM = await import('path')
-    const osM = await import('os')
     const db = getDb()
 
     // Get ticket + project info
@@ -270,14 +268,14 @@ export function registerIpcHandlers(win: BrowserWindow): void {
     }
 
     // Resolve cwd
-    const home = process.env.HOME || osM.default.homedir()
+    const home = process.env.HOME || os.homedir()
     let cwd = home
     if (projectId) {
       try {
         const row = db.prepare('SELECT repo_name FROM project_repos WHERE linear_project_id = ? ORDER BY created_at ASC LIMIT 1').get(projectId) as any
         if (row?.repo_name) {
-          const p = pathM.default.join(getWorkDir(), row.repo_name)
-          if (fsM.default.existsSync(p)) cwd = p
+          const p = path.join(getWorkDir(), row.repo_name)
+          if (fs.existsSync(p)) cwd = p
         }
       } catch {}
     }
@@ -326,23 +324,10 @@ Rules for newPercent:
     let newPercent: number
 
     try {
-      const tmpDir = osM.default.tmpdir()
-      const tmpFile = pathM.default.join(tmpDir, `progress-manual-${Date.now()}.txt`)
-      fsM.default.writeFileSync(tmpFile, prompt, 'utf-8')
-
-      const claudeEnv = { ...process.env }
-      delete claudeEnv.ANTHROPIC_API_KEY
-      const shell = process.env.SHELL || '/bin/zsh'
-
-      const output = execSync(`${shell} -l -c 'claude --model haiku' < "${tmpFile}"`, {
-        timeout: 30000,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: claudeEnv,
-      }).trim()
-
-      try { fsM.default.unlinkSync(tmpFile) } catch {}
-
+      const callId = uuidv4()
+      const result = await runClaudeStreaming({ prompt, callId, win: currentWin, cwd })
+      if (!result.ok) throw new Error('Claude CLI returned non-zero exit code')
+      const output = result.output
       const jsonMatch = output.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0])
@@ -372,7 +357,7 @@ Rules for newPercent:
       db.prepare('INSERT INTO progress (id, ticket_id, percent, log, updated_at) VALUES (?, ?, ?, ?, ?)').run(randomUUID(), ticketId, newPercent, newLog, now)
     }
 
-    win.webContents.send('progress:updated', { ticketId, summary, newPercent })
+    if (currentWin && !currentWin.isDestroyed()) currentWin.webContents.send('progress:updated', { ticketId, summary, newPercent })
     return { summary, newPercent }
   })
 
@@ -529,30 +514,14 @@ Rules for newPercent:
   })
 
   ipcMain.handle('eli5:generate', async (_event, ticketId: string, title: string, description: string) => {
-    const { execSync } = await import('child_process')
-    const fs = await import('fs')
-    const path = await import('path')
-    const os = await import('os')
-
     const prompt = `Explain this engineering ticket in simple terms (ELI5 - Explain Like I'm 5):\n\nTitle: ${title}\n\nDescription: ${description || 'No description provided'}\n\nKeep it under 150 words, friendly and clear.`
 
+    const callId = uuidv4()
     let content = ''
     try {
-      const tmpDir = os.default.tmpdir()
-      const tmpFile = path.default.join(tmpDir, `eli5-${Date.now()}.txt`)
-      fs.default.writeFileSync(tmpFile, prompt, 'utf-8')
-
-      const claudeEnv = { ...process.env }
-      delete claudeEnv.ANTHROPIC_API_KEY
-      const shell = process.env.SHELL || '/bin/zsh'
-      content = execSync(`${shell} -l -c 'claude --model haiku' < "${tmpFile}"`, {
-        timeout: 30000,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: claudeEnv,
-      }).trim()
-
-      try { fs.default.unlinkSync(tmpFile) } catch {}
+      const result = await runClaudeStreaming({ prompt, callId, win: currentWin })
+      if (!result.ok) return null
+      content = result.output
       console.log('[eli5] Generated via Claude CLI (haiku)')
     } catch (err) {
       console.error('[eli5] Claude CLI failed:', err)
@@ -590,7 +559,7 @@ Rules for newPercent:
         }
       }
       const contextContent = await buildContextContent(ticketId, issueData, previewCwd)
-      await createTerminal(sessionId, ticketId, projectId, repoName, contextContent, cols, rows, win)
+      await createTerminal(sessionId, ticketId, projectId, repoName, contextContent, cols, rows, currentWin)
       return sessionId
     }
   )
@@ -609,7 +578,7 @@ Rules for newPercent:
 
   ipcMain.handle('terminal:attach', async (_event, sessionId: string) => {
     if (typeof sessionId !== 'string') return
-    attachTerminal(sessionId, win)
+    attachTerminal(sessionId, currentWin)
   })
 
   ipcMain.handle('terminal:detach', async (_event, sessionId: string) => {
@@ -818,10 +787,6 @@ Rules for newPercent:
   // ============================================================
   ipcMain.handle('standup:generate', async () => {
     const db = getDb()
-    const { execSync } = await import('child_process')
-    const fs = await import('fs')
-    const path = await import('path')
-    const os = await import('os')
 
     // Get today midnight epoch
     const todayMidnight = new Date()
@@ -936,27 +901,13 @@ ${activityContext}`
 **Blockers:**
 - None`
 
-    // Try Claude CLI with Haiku model
     let standup = activityContext
     let usedAI = false
     try {
-      const tmpDir = os.default.tmpdir()
-      const tmpFile = path.default.join(tmpDir, `standup-${Date.now()}.txt`)
-      fs.default.writeFileSync(tmpFile, prompt, 'utf-8')
-
-      const claudeEnv = { ...process.env }
-      delete claudeEnv.ANTHROPIC_API_KEY
-      const shell = process.env.SHELL || '/bin/zsh'
-      const result = execSync(`${shell} -l -c 'claude --model haiku' < "${tmpFile}"`, {
-        timeout: 30000,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: claudeEnv,
-      })
-
-      try { fs.default.unlinkSync(tmpFile) } catch {}
-
-      standup = result.trim()
+      const callId = uuidv4()
+      const result = await runClaudeStreaming({ prompt, callId, win: currentWin })
+      if (!result.ok) throw new Error('Claude CLI returned non-zero exit code')
+      standup = result.output
       usedAI = true
       console.log('[standup] Generated via Claude CLI (haiku)')
     } catch (err) {
@@ -1049,26 +1000,26 @@ ${activityContext}`
   }
 
   let pollingActive = false
-  const pollInterval = setInterval(async () => {
-    if (openTabIds.size === 0 || pollingActive) return
-    pollingActive = true
-    try {
-      for (const id of openTabIds) {
-        try {
-          const fresh = await getActiveConnector().fetchIssue(id)
-          if (!win.isDestroyed()) win.webContents.send('linear:issueUpdated', fresh)
-        } catch {
-          // ignore per-issue errors
+  if (pollIntervalId === null) {
+    pollIntervalId = setInterval(async () => {
+      if (openTabIds.size === 0 || pollingActive) return
+      pollingActive = true
+      try {
+        for (const id of openTabIds) {
+          try {
+            const fresh = await getActiveConnector().fetchIssue(id)
+            if (currentWin && !currentWin.isDestroyed()) currentWin.webContents.send('linear:issueUpdated', fresh)
+          } catch {
+            // ignore per-issue errors
+          }
         }
+      } finally {
+        pollingActive = false
       }
-    } finally {
-      pollingActive = false
-    }
-  }, 90_000)
+    }, 90_000)
+  }
 
-  // Clean up when window closes
   win.on('closed', () => {
-    clearInterval(pollInterval)
     openTabIds.clear()
   })
 }

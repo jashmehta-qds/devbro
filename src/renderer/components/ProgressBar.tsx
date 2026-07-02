@@ -11,7 +11,7 @@ export function ProgressBar({ percent, showLabel = true, className = '' }: Progr
 
   const getColor = () => {
     if (clampedPercent === 100) return 'bg-green-500'
-    if (clampedPercent > 0) return 'bg-indigo-500'
+    if (clampedPercent > 0) return 'bg-violet-500'
     return 'bg-gray-700'
   }
 

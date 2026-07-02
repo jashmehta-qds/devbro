@@ -80,8 +80,8 @@ export function ChecklistWidget({ ticketId }: ChecklistWidgetProps) {
                 onClick={() => toggleItem(item.id)}
                 className={`flex-shrink-0 w-3.5 h-3.5 rounded border transition-colors ${
                   item.done
-                    ? 'bg-indigo-500 border-indigo-500'
-                    : 'border-gray-600 hover:border-indigo-400'
+                    ? 'bg-violet-500 border-violet-500'
+                    : 'border-gray-600 hover:border-violet-400'
                 }`}
               >
                 {item.done && (
@@ -123,12 +123,12 @@ export function ChecklistWidget({ ticketId }: ChecklistWidgetProps) {
           onChange={(e) => setNewItemText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && addItem()}
           placeholder="+ Add item..."
-          className="flex-1 bg-transparent border-b border-gray-800 focus:border-indigo-600 px-1 py-0.5 text-xs text-gray-400 placeholder-gray-600 focus:outline-none transition-colors"
+          className="flex-1 bg-transparent border-b border-gray-800 focus:border-violet-600 px-1 py-0.5 text-xs text-gray-400 placeholder-gray-600 focus:outline-none transition-colors"
         />
         {newItemText.trim() && (
           <button
             onClick={addItem}
-            className="px-2 py-0.5 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 transition-colors"
+            className="px-2 py-0.5 bg-violet-600 text-white rounded text-xs hover:bg-violet-700 transition-colors"
           >
             Add
           </button>

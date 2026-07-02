@@ -13,6 +13,7 @@ export function ELI5Card({ ticketId, title, description }: ELI5CardProps) {
   const content = eli5Cache[ticketId]
   const isLoading = eli5Loading[ticketId]
   const [error, setError] = useState<string | null>(null)
+  const [streamingText, setStreamingText] = useState('')
 
   // Collapsed by default when content already exists
   const [expanded, setExpanded] = useState(false)
@@ -30,6 +31,17 @@ export function ELI5Card({ ticketId, title, description }: ELI5CardProps) {
     if (!content) setExpanded(false)
   }, [ticketId])
 
+  // Subscribe to AI streaming while generating
+  useEffect(() => {
+    if (!isLoading) return
+    const offChunk = window.api.ai.onChunk(({ text }) => setStreamingText(prev => prev + text))
+    const offDone = window.api.ai.onDone(({ output, ok }) => {
+      if (ok) setStreamingText(output)
+      offChunk(); offDone()
+    })
+    return () => { offChunk(); offDone() }
+  }, [isLoading])
+
   const loadELI5 = async (force: boolean = false) => {
     if (!force) {
       try {
@@ -44,6 +56,7 @@ export function ELI5Card({ ticketId, title, description }: ELI5CardProps) {
       }
     }
 
+    setStreamingText('')
     setEli5Loading(ticketId, true)
     setError(null)
     try {
@@ -64,12 +77,12 @@ export function ELI5Card({ ticketId, title, description }: ELI5CardProps) {
   }
 
   return (
-    <div className="bg-indigo-950/30 border border-indigo-500/20 rounded-lg overflow-hidden">
+    <div className="bg-violet-950/30 border border-violet-500/20 rounded-lg overflow-hidden">
       {/* Toggle header */}
       <div className="flex items-center justify-between px-3 py-2">
         <button
           onClick={() => setExpanded((v) => !v)}
-          className="flex items-center gap-2 text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
+          className="flex items-center gap-2 text-xs font-medium text-violet-400 hover:text-violet-300 transition-colors"
         >
           <span>💡</span>
           <span>ELI5</span>
@@ -78,7 +91,7 @@ export function ELI5Card({ ticketId, title, description }: ELI5CardProps) {
         <button
           onClick={() => { setExpanded(true); loadELI5(true) }}
           disabled={isLoading}
-          className="text-xs text-indigo-500 hover:text-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="text-xs text-violet-500 hover:text-violet-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {isLoading ? (
             <span className="flex items-center gap-1">
@@ -96,13 +109,9 @@ export function ELI5Card({ ticketId, title, description }: ELI5CardProps) {
 
       {/* Collapsible body */}
       {expanded && (
-        <div className="px-3 pb-3 border-t border-indigo-500/10">
-          {isLoading && !content ? (
-            <div className="space-y-2 pt-2">
-              <div className="h-3 bg-indigo-900/40 rounded animate-pulse w-full" />
-              <div className="h-3 bg-indigo-900/40 rounded animate-pulse w-4/5" />
-              <div className="h-3 bg-indigo-900/40 rounded animate-pulse w-3/5" />
-            </div>
+        <div className="px-3 pb-3 border-t border-violet-500/10">
+          {isLoading ? (
+            <p className="text-gray-300 text-sm leading-relaxed pt-2">{streamingText || 'Generating…'}</p>
           ) : error ? (
             <p className="text-red-400 text-xs italic pt-2">{error}</p>
           ) : content ? (
