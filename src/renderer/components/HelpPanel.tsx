@@ -50,7 +50,7 @@ export function HelpPanel() {
             <Loc title="Tab bar (top)" desc="Open tickets and pages (Analytics, Settings). ID prominent, title below. Green dot = live terminal." />
             <Loc title="Ticket header" desc="Identifier · status · priority · assignee · branch · git chips · repo terminal button. Title on the next row with a 100px progress bar on the right." />
             <Loc title="Right pane switcher" desc="Notes (default), Checklist, Skills, Diff, Activity. Hover any pill to see its label; click to switch." />
-            <Loc title="Terminal (bottom)" desc="Drag the top edge to resize. ⌘T toggles. CLAUDE.md preview appears above the Start Claude button before you launch." />
+            <Loc title="Terminal drawer (bottom)" desc="App-wide drawer spanning the window. Drag the top edge to resize; ⌘J toggles. One tab per live session — click to switch, × to kill. Closing the drawer keeps sessions alive." />
             <Loc title="Footer launcher" desc="Analytics · Standup · Settings. Icon-only until hovered, keyboard shortcut chip on the right. Refresh Context (⚡) lives in the sidebar header, not the footer." />
           </div>
         </section>
@@ -59,7 +59,11 @@ export function HelpPanel() {
           <h2 className="text-[11px] uppercase tracking-[0.14em] text-gray-500 font-medium mb-4">Keyboard shortcuts</h2>
           <div className="bg-gray-900 border border-gray-800 rounded-xl divide-y divide-gray-800 shadow-soft">
             <Shortcut keys="⌘K"     label="Search — issues, commands (>), identifier jump (#ENG-123)" />
-            <Shortcut keys="⌘T"     label="Toggle terminal panel" />
+            <Shortcut keys="⌘J"     label="Toggle terminal drawer (bottom)" />
+            <Shortcut keys="⌘B"     label="Toggle sidebar" />
+            <Shortcut keys="⌘W"     label="Close active tab" />
+            <Shortcut keys="⌘1–8"   label="Jump to tab N" />
+            <Shortcut keys="⌘⇧[ ]"  label="Previous / next tab" />
             <Shortcut keys="⌘D"     label="Analytics" />
             <Shortcut keys="⌘U"     label="Standup" />
             <Shortcut keys="⌘,"     label="Settings" />

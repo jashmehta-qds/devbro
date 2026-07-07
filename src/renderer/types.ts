@@ -323,10 +323,11 @@ export interface WindowApi {
   analytics: {
     getDashboard: () => Promise<AnalyticsDashboard>
     getVelocity: (weeks?: number) => Promise<Array<{ weekStart: number; doneCount: number }>>
-    getFocus: () => Promise<{ terminalMinutes: number; appMinutes: number | null; ratio: number | null; deepWorkMinutes: number }>
-    getAging: (dayThreshold?: number) => Promise<Array<{ ticketId: string; identifier: string; title: string; lastTouchedAt: number; daysStale: number }>>
+    getFocus: () => Promise<{ terminalMinutes: number; deepWorkMinutes: number; deepBlocks: number; contextSwitches: number }>
+    getAging: (dayThreshold?: number) => Promise<Array<{ ticketId: string; identifier: string; title: string; lastTouchedAt: number; daysStale: number; unknown: boolean }>>
     getStreak: () => Promise<{ currentStreak: number; longestStreak: number }>
     exportCsv: (from?: number, to?: number) => Promise<string>
+    onChanged: (callback: () => void) => () => void
   }
   git: {
     getBranchInfo: (repoPath: string) => Promise<GitBranchInfo>
@@ -343,6 +344,7 @@ export interface WindowApi {
     refresh: () => Promise<void>
     preview: (ticketId: string, issueData: any, repoName?: string) => Promise<string>
     refreshForSession: (sessionId: string, ticketId: string, issueData: any) => Promise<{ ok: boolean; path?: string; error?: string }>
+    writeForSession: (ticketId: string, issueData: any, editedText: string) => Promise<{ ok: boolean; path?: string; error?: string }>
   }
   projectSkills: {
     list: (projectId: string) => Promise<Array<{ id: string; project_id: string; name: string; command: string; created_at: number }>>
@@ -370,5 +372,9 @@ export interface WindowApi {
   appConfig: {
     get: (key: string) => Promise<string | null>
     set: (key: string, value: string) => Promise<void>
+  }
+  ai: {
+    onChunk: (callback: (payload: { callId: string; text: string }) => void) => () => void
+    onDone: (callback: (payload: { callId: string; output: string; ok: boolean }) => void) => () => void
   }
 }

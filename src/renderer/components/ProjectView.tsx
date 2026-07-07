@@ -169,7 +169,7 @@ function ReposSection({ projectId }: { projectId: string }) {
             <button
               onClick={handleAdd}
               disabled={!selected || adding}
-              className="px-3 py-1 text-xs bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-md transition-colors"
+              className="px-3 py-1 text-xs bg-accent hover:bg-violet-500 disabled:opacity-40 text-white rounded-md transition-colors"
             >
               Link
             </button>
@@ -240,9 +240,9 @@ export function ProjectView() {
   const progressPct = details ? Math.round((details.progress ?? 0) * 100) : 0
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-gray-900">
+    <div className="flex-1 flex flex-col overflow-hidden bg-surface">
       {/* Header */}
-      <div className="flex-shrink-0 px-6 py-4 border-b border-gray-800">
+      <div className="flex-shrink-0 px-6 py-4 border-b border-border">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setActiveProjectId(null)}
@@ -288,7 +288,7 @@ export function ProjectView() {
       </div>
 
       {/* View mode toggle */}
-      <div className="flex-shrink-0 px-6 py-3 border-b border-gray-800">
+      <div className="flex-shrink-0 px-6 py-3 border-b border-border">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setViewMode('list')}

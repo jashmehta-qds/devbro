@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useAppStore } from '../store'
+import { useTerminal } from '../hooks/useTerminal'
 import type { LinearIssue } from '../types'
 
 const STATE_COLORS: Record<string, string> = {
@@ -32,14 +33,22 @@ interface CommandContext {
   openAnalytics: () => void
   openSettings: () => void
   refresh: () => void
+  toggleTerminal: () => void
+  openTerminalForCurrent: () => void
+  exportCsv: () => void
+  refreshAnalytics: () => void
   closeCommandPalette: () => void
 }
 
 const COMMANDS: AppCommand[] = [
-  { id: 'standup', label: 'Standup', desc: 'Generate daily standup', run: (ctx) => { ctx.openStandup(); ctx.closeCommandPalette() } },
-  { id: 'dashboard', label: 'Analytics', desc: 'Open analytics dashboard', run: (ctx) => { ctx.openAnalytics(); ctx.closeCommandPalette() } },
-  { id: 'settings', label: 'Settings', desc: 'Open project configuration', run: (ctx) => { ctx.openSettings(); ctx.closeCommandPalette() } },
-  { id: 'refresh', label: 'Refresh', desc: 'Reload issues from tracker', run: (ctx) => { ctx.refresh(); ctx.closeCommandPalette() } },
+  { id: 'toggle-terminal', label: 'Toggle terminal (⌘J)', desc: 'Show or hide the terminal drawer', run: (ctx) => { ctx.toggleTerminal(); ctx.closeCommandPalette() } },
+  { id: 'open-terminal', label: 'Open terminal for current ticket', desc: 'Start / focus a Claude session', run: (ctx) => { ctx.openTerminalForCurrent(); ctx.closeCommandPalette() } },
+  { id: 'standup', label: 'Generate standup', desc: 'Draft daily standup', run: (ctx) => { ctx.openStandup(); ctx.closeCommandPalette() } },
+  { id: 'export-csv', label: 'Export analytics CSV', desc: 'Download session data as CSV', run: (ctx) => { ctx.exportCsv(); ctx.closeCommandPalette() } },
+  { id: 'refresh-analytics', label: 'Refresh analytics', desc: 'Reload analytics data', run: (ctx) => { ctx.refreshAnalytics(); ctx.closeCommandPalette() } },
+  { id: 'dashboard', label: 'Go to Analytics', desc: 'Open analytics dashboard', run: (ctx) => { ctx.openAnalytics(); ctx.closeCommandPalette() } },
+  { id: 'settings', label: 'Go to Settings', desc: 'Open project configuration', run: (ctx) => { ctx.openSettings(); ctx.closeCommandPalette() } },
+  { id: 'refresh', label: 'Refresh issues', desc: 'Reload issues from tracker', run: (ctx) => { ctx.refresh(); ctx.closeCommandPalette() } },
 ]
 
 interface ParsedQuery {
@@ -120,7 +129,10 @@ export function CommandPalette() {
     openDashboardTab,
     openSettingsTab,
     setIsSyncing,
+    toggleDrawer,
+    addNotification,
   } = useAppStore()
+  const { openTerminal } = useTerminal()
   const [query, setQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -138,8 +150,30 @@ export function CommandPalette() {
     openAnalytics: () => openDashboardTab(),
     openSettings: () => openSettingsTab(),
     refresh: () => setIsSyncing(true),
+    toggleTerminal: () => toggleDrawer(),
+    openTerminalForCurrent: () => {
+      const issue = useAppStore.getState().selectedIssue
+      if (issue) void openTerminal(80, 30)
+      else addNotification('Open a ticket first to start a terminal')
+    },
+    exportCsv: async () => {
+      try {
+        const csv = await window.api.analytics.exportCsv()
+        const blob = new Blob([csv], { type: 'text/csv' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'devbro-export.csv'
+        a.click()
+        URL.revokeObjectURL(url)
+        addNotification('Analytics CSV exported')
+      } catch {
+        addNotification('CSV export failed')
+      }
+    },
+    refreshAnalytics: () => { openDashboardTab() },
     closeCommandPalette: () => setCommandPaletteOpen(false),
-  }), [setStandupOpen, openDashboardTab, openSettingsTab, setIsSyncing, setCommandPaletteOpen])
+  }), [setStandupOpen, openDashboardTab, openSettingsTab, setIsSyncing, toggleDrawer, openTerminal, addNotification, setCommandPaletteOpen])
 
   const filteredCommands = useMemo(() => {
     if (mode !== 'command') return []

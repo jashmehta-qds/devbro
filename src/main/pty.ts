@@ -41,6 +41,8 @@ interface PtySession {
   // Cleanup hooks invoked by killTerminal / cap-eviction so the onExit
   // handler doesn't double-process.
   cleanup?: () => void
+  // Throttled activity heartbeat (set in createTerminal).
+  recordHeartbeat?: () => void
 }
 
 // Hard cap. Each pty hosts a Claude subprocess which can balloon to multi-GB
@@ -231,6 +233,22 @@ export async function createTerminal(
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   const MAX_BUFFER = 65536
 
+  // Activity heartbeat: record at most one row per minute while the pty is
+  // actually producing/consuming data. Analytics derives "active time" from
+  // these instead of raw session span, so idle-open terminals don't count.
+  let lastHeartbeatMinute = 0
+  const recordHeartbeat = () => {
+    const minute = Math.floor(Date.now() / 60_000) * 60_000
+    if (minute === lastHeartbeatMinute) return
+    lastHeartbeatMinute = minute
+    try {
+      getDb().prepare(
+        'INSERT OR IGNORE INTO session_activity (session_id, ticket_id, minute_ts) VALUES (?, ?, ?)'
+      ).run(session.timeSessionId ?? sessionId, ticketId, minute)
+    } catch {}
+  }
+  session.recordHeartbeat = recordHeartbeat
+
   const flushBuffer = () => {
     flushTimer = null
     if (chunksLen === 0) return
@@ -258,6 +276,7 @@ export async function createTerminal(
   }
 
   proc.onData((data) => {
+    recordHeartbeat()
     chunks.push(data)
     chunksLen += data.length
     if (chunksLen >= MAX_BUFFER) {
@@ -309,6 +328,8 @@ export async function createTerminal(
       win.webContents.send(`terminal:exit:${sessionId}`, exitCode)
       // Generic broadcast so any tab holding a stale terminalSessionId can clear it.
       win.webContents.send('terminal:anyExit', { sessionId, code: exitCode, evicted: false })
+      // Push-based analytics refresh — session ended, numbers changed.
+      win.webContents.send('analytics:changed')
     }
 
     console.log(`[progress] Starting progress generation for ${ticketId}`)
@@ -330,7 +351,10 @@ export async function createTerminal(
 
 export function writeToTerminal(sessionId: string, data: string): void {
   const session = sessions.get(sessionId)
-  if (session) session.process.write(data)
+  if (session) {
+    session.recordHeartbeat?.()
+    session.process.write(data)
+  }
 }
 
 export function resizeTerminal(sessionId: string, cols: number, rows: number): void {

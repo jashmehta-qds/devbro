@@ -21,7 +21,14 @@ module.exports = {
           850: '#1c1c1f',
           900: '#141416',
           950: '#0d0d0f'
-        }
+        },
+        // Semantic design tokens — dark theme. Migrate ad-hoc gray-XXX usage to these.
+        bg: '#0d0d0f',        // app background (gray-950)
+        surface: '#141416',   // cards / panels (gray-900)
+        surface2: '#1c1c1f',  // raised surface / hover (gray-850)
+        border: '#26262b',    // hairline borders (gray-800)
+        accent: '#8b5cf6',    // violet
+        accent2: '#22d3ee',   // cyan — secondary accent
       },
       fontFamily: {
         sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],

@@ -1,11 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { ProgressBar } from './ProgressBar'
+import { Loading, ErrorState, EmptyState } from './ui'
+import { useAppStore } from '../store'
 import type { AnalyticsDashboard as AnalyticsDashboardData, ProjectDeadlineEntry } from '../types'
 
 // ---- new insight types ----
 type VelocityPoint = { weekStart: number; doneCount: number }
-type FocusData = { terminalMinutes: number; appMinutes: number | null; ratio: number | null; deepWorkMinutes: number }
-type AgingTicket = { ticketId: string; identifier: string; title: string; lastTouchedAt: number; daysStale: number }
+type FocusData = { terminalMinutes: number; deepWorkMinutes: number; deepBlocks: number; contextSwitches: number }
+type AgingTicket = { ticketId: string; identifier: string; title: string; lastTouchedAt: number; daysStale: number; unknown: boolean }
 type StreakData = { currentStreak: number; longestStreak: number }
 
 function formatMs(ms: number): string {
@@ -153,31 +155,36 @@ export function AnalyticsDashboard() {
       a.download = 'devbro-export.csv'
       a.click()
       URL.revokeObjectURL(url)
+      useAppStore.getState().addNotification('Analytics CSV exported')
     } catch (e: any) {
       console.error('CSV export failed', e)
+      useAppStore.getState().addNotification('CSV export failed')
     } finally {
       setExporting(false)
     }
   }, [])
 
+  // Refresh on analytics change (session end) + on window focus. No polling.
   useEffect(() => {
     load()
-    const interval = setInterval(load, 30_000)
-    return () => clearInterval(interval)
+    const unsub = window.api.analytics.onChanged(() => { load() })
+    const onFocus = () => { load() }
+    window.addEventListener('focus', onFocus)
+    return () => { unsub(); window.removeEventListener('focus', onFocus) }
   }, [load])
 
   if (loading && !data) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-gray-950">
-        <div className="text-gray-500 text-sm">Loading analytics...</div>
+      <div className="flex-1 flex items-center justify-center bg-bg">
+        <Loading label="Loading analytics…" />
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-gray-950">
-        <div className="text-red-400 text-sm">{error}</div>
+      <div className="flex-1 flex items-center justify-center bg-bg">
+        <ErrorState message={error} onRetry={load} />
       </div>
     )
   }
@@ -249,7 +256,7 @@ export function AnalyticsDashboard() {
             <div className="flex items-baseline gap-6 mb-6">
               <div>
                 <p className="text-3xl font-semibold text-gray-50 tracking-tight font-mono">{formatMs(data.today.totalMs)}</p>
-                <p className="text-xs text-gray-400 mt-1">coded</p>
+                <p className="text-xs text-gray-400 mt-1">Active time</p>
               </div>
               <div>
                 <p className="text-3xl font-semibold text-gray-50 tracking-tight font-mono">{data.today.ticketCount}</p>
@@ -340,14 +347,34 @@ export function AnalyticsDashboard() {
         {/* ---- Focus score + Streak ---- */}
         <div className="grid grid-cols-2 gap-6">
           {focus && (
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-soft">
-              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-[0.14em] mb-3">Deep work this week</p>
-              <p className="text-3xl font-semibold text-gray-50 tracking-tight font-mono">
-                {focus.terminalMinutes >= 60
-                  ? `${Math.floor(focus.terminalMinutes / 60)}h ${focus.terminalMinutes % 60}m`
-                  : `${focus.terminalMinutes}m`}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">terminal time in last 7 days</p>
+            <div className="bg-surface border border-border rounded-xl p-5 shadow-soft">
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-[0.14em] mb-3">Focus — last 7 days</p>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+                <div>
+                  <p className="text-2xl font-semibold text-gray-50 tracking-tight font-mono">
+                    {focus.deepWorkMinutes >= 60
+                      ? `${Math.floor(focus.deepWorkMinutes / 60)}h ${focus.deepWorkMinutes % 60}m`
+                      : `${focus.deepWorkMinutes}m`}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">Deep work (blocks ≥25min)</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-semibold text-gray-50 tracking-tight font-mono">{focus.deepBlocks}</p>
+                  <p className="text-xs text-gray-500 mt-1">Deep block{focus.deepBlocks !== 1 ? 's' : ''}</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-semibold text-gray-50 tracking-tight font-mono">
+                    {focus.terminalMinutes >= 60
+                      ? `${Math.floor(focus.terminalMinutes / 60)}h ${focus.terminalMinutes % 60}m`
+                      : `${focus.terminalMinutes}m`}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">Active time</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-semibold text-gray-50 tracking-tight font-mono">{focus.contextSwitches}</p>
+                  <p className="text-xs text-gray-500 mt-1">Context switches today</p>
+                </div>
+              </div>
             </div>
           )}
 
@@ -372,17 +399,19 @@ export function AnalyticsDashboard() {
           ) : (
             <div className="space-y-1">
               {aging.map((t) => {
-                const chipClass = t.daysStale >= 14
-                  ? 'bg-red-900/40 text-red-400 border-red-800/50'
-                  : t.daysStale >= 7
-                    ? 'bg-orange-900/40 text-orange-400 border-orange-800/50'
-                    : 'bg-yellow-900/30 text-yellow-500 border-yellow-800/30'
+                const chipClass = t.unknown
+                  ? 'bg-gray-800 text-gray-500 border-gray-700'
+                  : t.daysStale >= 14
+                    ? 'bg-red-900/40 text-red-400 border-red-800/50'
+                    : t.daysStale >= 7
+                      ? 'bg-orange-900/40 text-orange-400 border-orange-800/50'
+                      : 'bg-yellow-900/30 text-yellow-500 border-yellow-800/30'
                 return (
                   <div key={t.ticketId} className="flex items-center gap-3 py-2 border-b border-gray-900 last:border-0">
                     <span className="text-xs font-mono text-gray-500 flex-shrink-0 w-20 truncate">{t.identifier}</span>
                     <span className="text-xs text-gray-300 flex-1 truncate">{t.title}</span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded border font-medium flex-shrink-0 ${chipClass}`}>
-                      {t.daysStale}d stale
+                    <span className={`text-xs px-1.5 py-0.5 rounded border font-medium flex-shrink-0 ${chipClass}`} title={t.unknown ? 'Last-touched time unknown' : undefined}>
+                      {t.unknown ? '?' : `${t.daysStale}d stale`}
                     </span>
                   </div>
                 )
@@ -430,9 +459,7 @@ export function AnalyticsDashboard() {
         )}
 
         {data.projectDeadlines.length === 0 && data.inProgress.length === 0 && data.today.sessions.length === 0 && (
-          <div className="text-center py-12 text-gray-500 text-sm">
-            No data yet — start a Claude session to track time.
-          </div>
+          <EmptyState title="No data yet" hint="Start a Claude session to track time and progress." />
         )}
         </div>
       </div>

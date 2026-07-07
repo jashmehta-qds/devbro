@@ -257,6 +257,23 @@ const MIGRATIONS: Array<{ v: number; sql: string }> = [
     v: 20,
     sql: '', // handled specially — adds columns to time_sessions via columnExists
   },
+  {
+    v: 21,
+    sql: `
+      -- Activity heartbeats: one row per active minute per session.
+      -- Written (throttled) from pty onData. Active time = union of
+      -- 5-minute windows containing a heartbeat, so idle terminal time
+      -- no longer counts as coding.
+      CREATE TABLE IF NOT EXISTS session_activity (
+        session_id TEXT NOT NULL,
+        ticket_id TEXT NOT NULL,
+        minute_ts INTEGER NOT NULL, -- epoch ms floored to the minute
+        PRIMARY KEY (session_id, minute_ts)
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_activity_minute ON session_activity(minute_ts);
+      CREATE INDEX IF NOT EXISTS idx_session_activity_ticket ON session_activity(ticket_id);
+    `,
+  },
 ]
 
 function columnExists(db: Database.Database, table: string, column: string): boolean {

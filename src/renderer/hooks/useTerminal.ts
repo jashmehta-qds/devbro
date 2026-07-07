@@ -1,33 +1,27 @@
-import { useCallback, useRef } from 'react'
+import { useCallback } from 'react'
 import { useAppStore } from '../store'
-import type { Terminal } from '@xterm/xterm'
 
+/**
+ * Terminal lifecycle helpers for the app-level bottom drawer.
+ *
+ * A terminal session is created via `terminal.create` (preserving the exact
+ * CLAUDE.md / cols / rows / repoName flow) and registered as a DrawerSession.
+ * The backend enforces the concurrent-session cap and broadcasts evictions via
+ * `terminal.onAnyExit`; App.tsx listens and drops dead sessions from the drawer.
+ */
 export function useTerminal() {
   const store = useAppStore()
-  const xtermRef = useRef<Terminal | null>(null)
-  const cleanupRef = useRef<(() => void) | null>(null)
-
-  // Derive active tab info from store
-  const activeTabId = store.activeTabId
-  const selectedIssue = store.selectedIssue
-  const terminalSessionId = store.terminalSessionId
-  const progress = store.progress
 
   const openTerminal = useCallback(
     async (cols: number = 80, rows: number = 30, repoName?: string) => {
-      if (!selectedIssue) return
+      const { selectedIssue, drawerSessions, setActiveDrawerSession } = useAppStore.getState()
+      if (!selectedIssue) return undefined
 
-      // Kill existing session if any
-      if (terminalSessionId) {
-        try {
-          await window.api.terminal.kill(terminalSessionId)
-        } catch {
-          // ignore
-        }
-        if (cleanupRef.current) {
-          cleanupRef.current()
-          cleanupRef.current = null
-        }
+      // If a live session already exists for this ticket, just focus it.
+      const existing = drawerSessions.find((d) => d.ticketId === selectedIssue.id)
+      if (existing) {
+        setActiveDrawerSession(existing.sessionId)
+        return existing.sessionId
       }
 
       try {
@@ -39,94 +33,73 @@ export function useTerminal() {
           repoName
         )
 
-        if (activeTabId) {
-          store.updateTab(activeTabId, { terminalSessionId: sessionId, terminalOpen: true })
-        }
+        useAppStore.getState().addDrawerSession({
+          sessionId,
+          ticketId: selectedIssue.id,
+          label: selectedIssue.identifier || selectedIssue.title.slice(0, 12),
+          issue: selectedIssue,
+        })
 
-        // Subscribe to terminal exit only
+        // Bootstrap a progress entry on exit if none exists yet.
         const unsubExit = window.api.terminal.onExit(sessionId, (code) => {
-          const currentProgress = progress[selectedIssue.id]
+          const currentProgress = useAppStore.getState().progress[selectedIssue.id]
           if (!currentProgress || currentProgress.percent === 0) {
             window.api.progress
               .update(selectedIssue.id, 10, `Claude session exited with code ${code}`)
               .then((p) => {
-                if (p) store.setProgress(selectedIssue.id, p as any)
+                if (p) useAppStore.getState().setProgress(selectedIssue.id, p as any)
               })
               .catch(() => {})
           }
           unsubExit()
-          cleanupRef.current = null
         })
-
-        cleanupRef.current = () => {
-          unsubExit()
-        }
 
         return sessionId
       } catch (err) {
         console.error('Failed to create terminal:', err)
+        useAppStore.getState().addNotification('Failed to open terminal')
+        return undefined
       }
     },
-    [selectedIssue, terminalSessionId, progress, activeTabId, store]
+    []
   )
 
+  // Close the drawer without killing ptys (detach semantics live in the panel).
   const closeTerminal = useCallback(async () => {
-    if (terminalSessionId) {
-      try {
-        await window.api.terminal.kill(terminalSessionId)
-      } catch {
-        // ignore
-      }
-    }
-    if (cleanupRef.current) {
-      cleanupRef.current()
-      cleanupRef.current = null
-    }
-    if (xtermRef.current) {
-      xtermRef.current.clear()
-    }
-    if (activeTabId) {
-      store.updateTab(activeTabId, { terminalSessionId: null, terminalOpen: false })
-    }
-  }, [terminalSessionId, activeTabId, store])
+    useAppStore.getState().setDrawerOpen(false)
+  }, [])
 
-  const writeToTerminal = useCallback(
-    async (data: string) => {
-      if (terminalSessionId) {
-        await window.api.terminal.write(terminalSessionId, data)
-      }
-    },
-    [terminalSessionId]
-  )
+  // Send a command to the current ticket's terminal session, creating one if needed.
+  const runCommand = useCallback(async (command: string) => {
+    const { selectedIssue, drawerSessions, setActiveDrawerSession } = useAppStore.getState()
+    if (!selectedIssue) return
+    let session = drawerSessions.find((d) => d.ticketId === selectedIssue.id)
+    if (!session) {
+      const sid = await openTerminal()
+      if (!sid) return
+      session = useAppStore.getState().drawerSessions.find((d) => d.sessionId === sid)
+    }
+    if (session) {
+      setActiveDrawerSession(session.sessionId)
+      await window.api.terminal.write(session.sessionId, command + '\n')
+    }
+  }, [openTerminal])
 
-  const resizeTerminal = useCallback(
-    async (cols: number, rows: number) => {
-      if (terminalSessionId) {
-        await window.api.terminal.resize(terminalSessionId, cols, rows)
-      }
-    },
-    [terminalSessionId]
-  )
-
-  const runCommand = useCallback(
-    async (command: string) => {
-      let sid = terminalSessionId
-      if (!sid) {
-        sid = (await openTerminal()) ?? null
-      }
-      if (sid) {
-        await window.api.terminal.write(sid, command + '\n')
-      }
-    },
-    [terminalSessionId, openTerminal]
-  )
+  const killSession = useCallback(async (sessionId: string) => {
+    try {
+      await window.api.terminal.kill(sessionId)
+    } catch {
+      // ignore
+    }
+    // onAnyExit will remove it from the drawer; remove eagerly too for snappiness.
+    useAppStore.getState().removeDrawerSession(sessionId)
+  }, [])
 
   return {
-    xtermRef,
     openTerminal,
     closeTerminal,
-    writeToTerminal,
-    resizeTerminal,
-    runCommand
+    killSession,
+    runCommand,
+    toggleDrawer: store.toggleDrawer,
   }
 }

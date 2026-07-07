@@ -152,9 +152,11 @@ const STATE_DOT_COLOR: Record<string, string> = {
 export function TicketView() {
   const store = useAppStore()
   const selectedIssue = store.selectedIssue
-  const terminalOpen = store.terminalOpen
+  const drawerSessions = store.drawerSessions
   const isSyncing = store.isSyncing
-  const { progress, setProgress, setTerminalOpen, ticketBranches, setTicketBranch, activeTabId, updateTab } = store
+  const { progress, setProgress, ticketBranches, setTicketBranch, activeTabId, updateTab } = store
+  // Does this ticket currently have a live terminal session in the drawer?
+  const hasLiveTerminal = !!selectedIssue && drawerSessions.some((d) => d.ticketId === selectedIssue.id)
   const { openTerminal } = useTerminal()
   const { selectIssue } = useLinear()
   const [branchInput, setBranchInput] = useState('')
@@ -289,7 +291,7 @@ export function TicketView() {
   }, [reposKey])
 
   useEffect(() => {
-    if (!terminalOpen || projectRepos.length === 0) return
+    if (!hasLiveTerminal || projectRepos.length === 0) return
     const refreshGit = async () => {
       try {
         const info = await window.api.git.getBranchInfo(`~/Work/${projectRepos[0]}`)
@@ -298,10 +300,9 @@ export function TicketView() {
     }
     const interval = setInterval(refreshGit, 30_000)
     return () => clearInterval(interval)
-  }, [terminalOpen, projectRepos])
+  }, [hasLiveTerminal, projectRepos])
 
   const handleOpenTerminal = async (repoName?: string) => {
-    setTerminalOpen(true)
     await openTerminal(80, 30, repoName)
   }
 
@@ -481,9 +482,9 @@ export function TicketView() {
               projectRepos.map((repo) => (
                 <button key={repo} onClick={() => handleOpenTerminal(repo)}
                   className={`inline-flex items-center gap-1.5 h-7 px-3 rounded-md text-xs font-medium transition-colors border ${
-                    terminalOpen
-                      ? 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-700 hover:text-gray-200'
-                      : 'bg-violet-600 hover:bg-violet-500 border-transparent text-white shadow-soft'
+                    hasLiveTerminal
+                      ? 'bg-surface border-border text-gray-400 hover:border-gray-700 hover:text-gray-200'
+                      : 'bg-accent hover:bg-violet-500 border-transparent text-white shadow-soft'
                   }`}
                   title={`Open terminal in ~/Work/${repo}`}
                 >
@@ -496,9 +497,9 @@ export function TicketView() {
             ) : projectRepos.length === 1 ? (
               <button onClick={() => handleOpenTerminal(projectRepos[0])}
                 className={`inline-flex items-center gap-1.5 h-7 px-3 rounded-md text-xs font-medium transition-colors ${
-                  terminalOpen
-                    ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-900 px-2'
-                    : 'bg-violet-600 hover:bg-violet-500 text-white shadow-soft'
+                  hasLiveTerminal
+                    ? 'text-gray-400 hover:text-gray-200 hover:bg-surface px-2'
+                    : 'bg-accent hover:bg-violet-500 text-white shadow-soft'
                 }`}
               >
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">

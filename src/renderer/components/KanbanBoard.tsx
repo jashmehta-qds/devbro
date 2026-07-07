@@ -10,14 +10,6 @@ const STATE_ORDER: Record<string, number> = {
   cancelled: 4,
 }
 
-const STATE_COLORS: Record<string, string> = {
-  backlog: '#6B7280',
-  unstarted: '#9CA3AF',
-  started: '#3B82F6',
-  completed: '#10B981',
-  cancelled: '#6B7280',
-}
-
 function PriorityPill({ label }: { label: string }) {
   const colorMap: Record<string, string> = {
     'Urgent': 'bg-red-900/40 text-red-300 border-red-700/50',
@@ -155,17 +147,17 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
   }
 
   return (
-    <div className="flex-1 overflow-x-auto bg-gray-900 p-4">
+    <div className="flex-1 overflow-x-auto bg-surface p-4">
       <div className="flex gap-4 h-full">
         {sortedStates.map((state) => {
           const issuesInState = issuesByState[state.id] ?? []
           return (
             <div
               key={state.id}
-              className="w-72 flex-shrink-0 bg-gray-900 border border-gray-800 rounded-xl flex flex-col"
+              className="w-72 flex-shrink-0 bg-surface border border-border rounded-xl flex flex-col"
             >
               {/* Column header */}
-              <div className="px-3 py-2 border-b border-gray-800 flex items-center gap-2 flex-shrink-0">
+              <div className="px-3 py-2 border-b border-border flex items-center gap-2 flex-shrink-0">
                 <div
                   className="w-1.5 h-1.5 rounded-full flex-shrink-0"
                   style={{ backgroundColor: state.color }}
@@ -192,7 +184,7 @@ export function KanbanBoard({ projectId }: KanbanBoardProps) {
                       key={issue.id}
                       draggable
                       onDragStart={() => handleDragStart(issue.id)}
-                      className="bg-gray-850 border border-gray-800 rounded-lg p-3 m-2 cursor-move hover:border-gray-700 transition-colors"
+                      className="bg-surface2 border border-border rounded-lg p-3 m-2 cursor-move hover:border-gray-700 transition-colors"
                       onClick={() => openTab(issue)}
                     >
                       {/* Identifier */}

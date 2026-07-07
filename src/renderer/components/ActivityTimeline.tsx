@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Markdown } from './Markdown'
+import { Spinner, EmptyState } from './ui'
 
 interface ActivityEvent {
   id: string
@@ -178,21 +179,16 @@ export function ActivityTimeline({ ticketId, onSwitchToDiff }: {
   }, [ticketId])
 
   if (loading) {
-    return (
-      <div className="space-y-3">
-        {[1, 2, 3].map(i => <div key={i} className="skeleton h-12 rounded-lg" />)}
-      </div>
-    )
+    return <div className="flex items-center justify-center py-10"><Spinner size={18} /></div>
   }
 
   if (events.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-40 gap-2 text-gray-600 text-center px-4">
-        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <p className="text-xs">No activity yet — start a Claude session to log progress</p>
-      </div>
+      <EmptyState
+        title="No activity yet"
+        hint="Start a Claude session to log progress, status changes, and diffs."
+        icon={<svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
+      />
     )
   }
 

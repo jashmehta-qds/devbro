@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useAppStore } from '../store'
 import { useLinear } from '../hooks/useLinear'
 import { ProgressDot } from './ProgressBar'
-import { FilterPanel, loadFilters, saveFilters, activeFilterCount, DEFAULT_FILTERS } from './FilterPanel'
+import { FilterPanel, loadFilters, saveFilters, activeFilterCount } from './FilterPanel'
 import type { SidebarFilters } from './FilterPanel'
 import type { LinearCycle } from '../types'
 
@@ -61,7 +61,6 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: { collapsed?: b
     projects,
     issues,
     activeTabId,
-    tabs,
     expandedProjects,
     loading,
     isSyncing,

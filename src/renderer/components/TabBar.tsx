@@ -16,16 +16,15 @@ export function TabBar() {
   const {
     tabs, activeTabId, focusTab, closeTab,
     projectTabs, activeProjectTabId, focusProjectTab, closeProjectTab,
-    isSyncing, terminalOpen, setTerminalOpen
+    isSyncing, drawerOpen, drawerSessions, selectedIssue, toggleDrawer,
   } = useAppStore()
-  const { openTerminal, closeTerminal } = useTerminal()
+  const { openTerminal } = useTerminal()
 
   const handleTerminalToggle = async () => {
-    if (terminalOpen) {
-      await closeTerminal()
-    } else {
-      setTerminalOpen(true)
+    if (!drawerOpen && drawerSessions.length === 0 && selectedIssue) {
       await openTerminal()
+    } else {
+      toggleDrawer()
     }
   }
 
@@ -37,7 +36,7 @@ export function TabBar() {
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId
         const stateColor = STATE_COLORS[tab.issue.state.type] || '#6B7280'
-        const hasTerminal = tab.terminalOpen && tab.terminalSessionId
+        const hasTerminal = drawerSessions.some((d) => d.ticketId === tab.id)
 
         return (
           <div
@@ -121,30 +120,27 @@ export function TabBar() {
           </svg>
         )}
 
-        {/* Terminal toggle */}
-        {activeTabId && (
-          <button
-            onClick={handleTerminalToggle}
-            title={terminalOpen ? 'Hide terminal (⌘T)' : 'Open terminal (⌘T)'}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-all duration-150 ${
-              terminalOpen
-                ? 'bg-violet-600/20 text-violet-300 border border-violet-600/40'
-                : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800 border border-transparent'
-            }`}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-            {/* Green pulse when session is live */}
-            {terminalOpen && (
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
-              </span>
-            )}
-          </button>
-        )}
+        {/* Terminal drawer toggle (⌘J) */}
+        <button
+          onClick={handleTerminalToggle}
+          title={drawerOpen ? 'Hide terminal (⌘J)' : 'Open terminal (⌘J)'}
+          className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-all duration-150 ${
+            drawerOpen
+              ? 'bg-accent/20 text-violet-300 border border-accent/40'
+              : 'text-gray-500 hover:text-gray-300 hover:bg-border border border-transparent'
+          }`}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          {drawerSessions.length > 0 && (
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
+            </span>
+          )}
+        </button>
       </div>
     </div>
   )

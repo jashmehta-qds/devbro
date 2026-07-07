@@ -99,6 +99,14 @@ function saveExpandedToStorage(set: Set<string>) {
   } catch { /* ignore */ }
 }
 
+// A live terminal session shown in the app-level bottom drawer.
+export interface DrawerSession {
+  sessionId: string
+  ticketId: string
+  label: string            // ticket identifier (or title fallback) for the tab strip
+  issue: LinearIssue
+}
+
 interface AppState {
   // Linear data
   projects: LinearProject[]
@@ -156,6 +164,16 @@ interface AppState {
   notifications: Array<{ id: string; message: string }>
   addNotification: (message: string) => void
   dismissNotification: (id: string) => void
+
+  // App-level terminal drawer (bottom, full width). Independent of per-tab state.
+  drawerOpen: boolean
+  drawerSessions: DrawerSession[]
+  activeDrawerSessionId: string | null
+  setDrawerOpen: (open: boolean) => void
+  toggleDrawer: () => void
+  addDrawerSession: (s: DrawerSession) => void
+  removeDrawerSession: (sessionId: string) => void
+  setActiveDrawerSession: (sessionId: string | null) => void
 
   // Actions
   setProjects: (projects: LinearProject[]) => void
@@ -325,6 +343,36 @@ export const useAppStore = create<AppState>()((set, get) => ({
   recentIssueIds: loadRecentIssueIds(),
   notifications: [],
 
+  drawerOpen: false,
+  drawerSessions: [],
+  activeDrawerSessionId: null,
+
+  setDrawerOpen: (open) => set({ drawerOpen: open }),
+  toggleDrawer: () => set((state) => ({ drawerOpen: !state.drawerOpen })),
+  addDrawerSession: (s) =>
+    set((state) => {
+      const exists = state.drawerSessions.some((d) => d.sessionId === s.sessionId)
+      const drawerSessions = exists ? state.drawerSessions : [...state.drawerSessions, s]
+      return { drawerSessions, activeDrawerSessionId: s.sessionId, drawerOpen: true }
+    }),
+  removeDrawerSession: (sessionId) =>
+    set((state) => {
+      const idx = state.drawerSessions.findIndex((d) => d.sessionId === sessionId)
+      if (idx === -1) return {}
+      const drawerSessions = state.drawerSessions.filter((d) => d.sessionId !== sessionId)
+      let activeDrawerSessionId = state.activeDrawerSessionId
+      if (activeDrawerSessionId === sessionId) {
+        activeDrawerSessionId = drawerSessions.length === 0 ? null
+          : (drawerSessions[idx - 1]?.sessionId ?? drawerSessions[0].sessionId)
+      }
+      return {
+        drawerSessions,
+        activeDrawerSessionId,
+        drawerOpen: drawerSessions.length === 0 ? false : state.drawerOpen,
+      }
+    }),
+  setActiveDrawerSession: (sessionId) => set({ activeDrawerSessionId: sessionId, drawerOpen: true }),
+
   addNotification: (message) => {
     const id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
       ? crypto.randomUUID()
@@ -373,10 +421,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set((state) => {
       const idx = state.tabs.findIndex((t) => t.id === issueId)
       if (idx === -1) return {}
-      const closedTab = state.tabs[idx]
-      // Kill the pty for this tab so we don't orphan a Claude subprocess.
-      if (closedTab.terminalSessionId) {
-        window.api.terminal.kill(closedTab.terminalSessionId).catch(() => {})
+      // Kill any live drawer terminal session for this ticket so we don't orphan a Claude subprocess.
+      for (const d of state.drawerSessions) {
+        if (d.ticketId === issueId) {
+          window.api.terminal.kill(d.sessionId).catch(() => {})
+        }
       }
       const newTabs = state.tabs.filter((t) => t.id !== issueId)
       let newActiveTabId = state.activeTabId

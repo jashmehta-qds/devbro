@@ -60,6 +60,20 @@ export async function generateAndAppendProgress(args: SummaryArgs): Promise<{ su
   const prevPercent = prev?.percent ?? 0
   const prevLog = prev?.log ?? ''
 
+  // Checklist anchor: when a checklist exists, done/total IS the progress.
+  // The LLM estimate is only a secondary signal — this kills the old
+  // "+5% for any activity" drift.
+  let checklistPercent: number | null = null
+  try {
+    const cl = db.prepare('SELECT items FROM checklists WHERE ticket_id = ?').get(ticketId) as any
+    if (cl) {
+      const items = JSON.parse(cl.items) as Array<{ done?: boolean }>
+      if (Array.isArray(items) && items.length > 0) {
+        checklistPercent = Math.round((items.filter(i => i.done).length / items.length) * 100)
+      }
+    }
+  } catch {}
+
   const issueRow = db.prepare('SELECT data FROM issues_cache WHERE id = ?').get(ticketId) as any
   let issueTitle = ''
   let issueDescription = ''
@@ -119,12 +133,23 @@ Be REALISTIC with percentage. Major feature done = big jump (20-40pts). Just exp
       console.log(`[progress] Claude skill result: ${summary} (${newPercent}%)`)
     } catch {
       summary = `Worked for ~${durationMin}m${commitLog ? `; made ${commitLog.split('\n').length} commit(s)` : ''}.`
-      newPercent = Math.min(100, prevPercent + (hadActivity ? 5 : 0))
+      newPercent = prevPercent // no evidence → no movement
     }
   } else {
     const commitCount = commitLog ? commitLog.split('\n').filter(Boolean).length : 0
     summary = `Worked for ~${durationMin}m${commitCount > 0 ? `; made ${commitCount} commit(s)` : ''}${filesChanged.length > 0 ? ` across ${filesChanged.length} file(s)` : ''}.`
-    newPercent = Math.min(100, prevPercent + (hadActivity ? 5 : 0))
+    newPercent = prevPercent // activity alone is not progress
+  }
+
+  // Checklist is the source of truth when present: the LLM/heuristic value
+  // may only refine within ±10pts of the checklist anchor.
+  if (checklistPercent !== null) {
+    const lo = Math.max(0, checklistPercent - 10)
+    const hi = Math.min(100, checklistPercent + 10)
+    newPercent = Math.min(hi, Math.max(lo, newPercent))
+    // Still never regress below previously recorded percent unless the
+    // checklist itself went down (items unchecked/added).
+    if (checklistPercent >= prevPercent) newPercent = Math.max(newPercent, Math.min(prevPercent, hi))
   }
 
   // Build the log entry: newest at top, one line per entry

@@ -1,4 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { EmptyState, ErrorState, Spinner } from './ui'
+
+const DIFF_TOO_LARGE_BYTES = 2 * 1024 * 1024 // 2MB — render file list only beyond this
 
 interface FileDiff {
   filename: string
@@ -58,13 +61,13 @@ function parseDiff(raw: string): FileDiff[] {
   return files
 }
 
-function FileAccordion({ file }: { file: FileDiff }) {
-  const [open, setOpen] = useState(true)
+function FileAccordion({ file, listOnly = false }: { file: FileDiff; listOnly?: boolean }) {
+  const [open, setOpen] = useState(!listOnly)
   return (
-    <div className="rounded-lg border border-gray-800 overflow-hidden mb-3">
+    <div className="rounded-lg border border-border overflow-hidden mb-3">
       <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-3 py-2 bg-gray-900 hover:bg-gray-850 transition-colors text-left"
+        onClick={() => !listOnly && setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-surface hover:bg-surface2 transition-colors text-left"
       >
         <span className="font-mono text-xs text-gray-200 truncate">{file.filename}</span>
         <div className="flex items-center gap-2 flex-shrink-0 ml-2">
@@ -74,15 +77,17 @@ function FileAccordion({ file }: { file: FileDiff }) {
           {file.deletions > 0 && (
             <span className="text-[11px] font-mono text-red-400">-{file.deletions}</span>
           )}
-          <svg
-            className={`w-3 h-3 text-gray-500 transition-transform ${open ? 'rotate-90' : ''}`}
-            fill="none" viewBox="0 0 24 24" stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
+          {!listOnly && (
+            <svg
+              className={`w-3 h-3 text-gray-500 transition-transform ${open ? 'rotate-90' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          )}
         </div>
       </button>
-      {open && (
+      {open && !listOnly && (
         <div className="overflow-x-auto">
           <pre className="text-[11px] font-mono leading-5">
             {file.hunks.map((hunk, hi) => (
@@ -114,16 +119,16 @@ function FileAccordion({ file }: { file: FileDiff }) {
   )
 }
 
-export function DiffViewer({ ticketId, projectRepos, onViewDiffInActivity }: {
+export function DiffViewer({ ticketId, projectRepos }: {
   ticketId: string
   projectRepos: string[]
-  onViewDiffInActivity?: () => void
 }) {
   const [mode, setMode] = useState<'uncommitted' | 'session'>('uncommitted')
   const [diff, setDiff] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sessionSha, setSessionSha] = useState<string | null>(null)
+  const tooLarge = diff.length > DIFF_TOO_LARGE_BYTES
 
   const repoPath = projectRepos[0] ? `~/Work/${projectRepos[0]}` : null
 
@@ -156,14 +161,7 @@ export function DiffViewer({ ticketId, projectRepos, onViewDiffInActivity }: {
   const files = parseDiff(diff)
 
   if (!repoPath) {
-    return (
-      <div className="flex flex-col items-center justify-center h-40 gap-2 text-gray-600">
-        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-        </svg>
-        <p className="text-xs">No repo linked to this ticket's project</p>
-      </div>
-    )
+    return <EmptyState title="Not a repo" hint="No repo is linked to this ticket's project. Link one in the project view." />
   }
 
   return (
@@ -199,25 +197,25 @@ export function DiffViewer({ ticketId, projectRepos, onViewDiffInActivity }: {
       {/* Content */}
       <div className="flex-1 overflow-y-auto min-h-0">
         {loading && (
-          <div className="space-y-2">
-            {[1,2,3].map(i => (
-              <div key={i} className="skeleton h-10 rounded-lg" />
-            ))}
-          </div>
+          <div className="flex items-center justify-center py-10"><Spinner size={18} /></div>
         )}
         {!loading && error && (
-          <p className="text-xs text-red-400">{error}</p>
+          <ErrorState message={error} onRetry={fetchDiff} />
         )}
         {!loading && !error && files.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-32 gap-2 text-gray-600">
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" />
-            </svg>
-            <p className="text-xs">No changes</p>
+          <EmptyState
+            title="No changes"
+            hint={mode === 'session' ? 'Nothing changed since the last session started.' : 'Working tree is clean.'}
+            icon={<svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" /></svg>}
+          />
+        )}
+        {!loading && !error && files.length > 0 && tooLarge && (
+          <div className="mb-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300">
+            Diff is large ({(diff.length / (1024 * 1024)).toFixed(1)}MB) — showing file list only. Open in your editor for full hunks.
           </div>
         )}
         {!loading && !error && files.map((file, i) => (
-          <FileAccordion key={i} file={file} />
+          <FileAccordion key={i} file={file} listOnly={tooLarge} />
         ))}
       </div>
     </div>

@@ -130,6 +130,11 @@ contextBridge.exposeInMainWorld('api', {
     getAging: (dayThreshold?: number) => ipcRenderer.invoke('analytics:getAging', dayThreshold),
     getStreak: () => ipcRenderer.invoke('analytics:getStreak'),
     exportCsv: (from?: number, to?: number) => ipcRenderer.invoke('analytics:exportCsv', from, to),
+    onChanged: (callback: () => void) => {
+      const listener = () => callback()
+      ipcRenderer.on('analytics:changed', listener)
+      return () => ipcRenderer.removeListener('analytics:changed', listener)
+    },
   },
 
   git: {

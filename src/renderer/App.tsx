@@ -1,7 +1,7 @@
-import React, { useCallback, useRef, useState, useEffect } from 'react'
+import React, { useRef, useState, useEffect } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { TicketView } from './components/TicketView'
-import { TerminalPanel } from './components/TerminalPanel'
+import { TerminalDrawer } from './components/TerminalDrawer'
 import { ProjectConfigPanel } from './components/ProjectConfigPanel'
 import { AnalyticsDashboard } from './components/AnalyticsDashboard'
 import { HelpPanel } from './components/HelpPanel'
@@ -10,20 +10,11 @@ import { TabBar } from './components/TabBar'
 import { CommandPalette } from './components/CommandPalette'
 import { StandupModal } from './components/StandupModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { Toasts } from './components/ui'
 import { useAppStore } from './store'
 import { useTerminal } from './hooks/useTerminal'
 
-const TERMINAL_MIN = 160
-const TERMINAL_DEFAULT = 300
 const SIDEBAR_COLLAPSED_KEY = 'devbro-sidebar-collapsed'
-const TERMINAL_HEIGHT_KEY = 'devbro-terminal-height'
-
-function loadTerminalHeight(): number {
-  try {
-    const v = localStorage.getItem(TERMINAL_HEIGHT_KEY)
-    return v ? parseInt(v, 10) || TERMINAL_DEFAULT : TERMINAL_DEFAULT
-  } catch { return TERMINAL_DEFAULT }
-}
 
 function loadSidebarCollapsed(): boolean {
   try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true' } catch { return false }
@@ -31,7 +22,6 @@ function loadSidebarCollapsed(): boolean {
 
 export default function App() {
   const store = useAppStore()
-  const terminalOpen = store.terminalOpen
   const settingsOpen = store.settingsOpen
   const dashboardOpen = store.dashboardOpen
   const helpOpen = store.helpOpen
@@ -41,7 +31,6 @@ export default function App() {
   const tabs = store.tabs
   const activeTabId = store.activeTabId
   const selectedIssue = store.selectedIssue
-  const notifications = store.notifications
   const {
     setCommandPaletteOpen,
     setStandupOpen,
@@ -52,55 +41,20 @@ export default function App() {
     closeTab,
     updateTab,
     addNotification,
-    dismissNotification,
-    setTerminalOpen,
     setProgress,
+    toggleDrawer,
+    removeDrawerSession,
   } = store
-  const { closeTerminal, openTerminal } = useTerminal()
+  const { openTerminal } = useTerminal()
 
   // Refs to avoid stale closures in shortcuts/listeners
   const tabsRef = useRef(tabs)
   const activeTabIdRef = useRef(activeTabId)
   const selectedIssueRef = useRef(selectedIssue)
-  const terminalOpenRef = useRef(terminalOpen)
   useEffect(() => { tabsRef.current = tabs }, [tabs])
   useEffect(() => { activeTabIdRef.current = activeTabId }, [activeTabId])
   useEffect(() => { selectedIssueRef.current = selectedIssue }, [selectedIssue])
-  useEffect(() => { terminalOpenRef.current = terminalOpen }, [terminalOpen])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadSidebarCollapsed)
-  const [terminalHeight, setTerminalHeight] = useState(loadTerminalHeight)
-  const dragging = useRef(false)
-  const startY = useRef(0)
-  const startHeight = useRef(0)
-
-  const handleCloseTerminal = useCallback(async () => {
-    await closeTerminal()
-  }, [closeTerminal])
-
-  const onDividerMouseDown = useCallback((e: React.MouseEvent) => {
-    dragging.current = true
-    startY.current = e.clientY
-    startHeight.current = terminalHeight
-    e.preventDefault()
-  }, [terminalHeight])
-
-  useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      if (!dragging.current) return
-      const delta = startY.current - e.clientY
-      const max = window.innerHeight * 0.7
-      const next = Math.min(max, Math.max(TERMINAL_MIN, startHeight.current + delta))
-      setTerminalHeight(next)
-      try { localStorage.setItem(TERMINAL_HEIGHT_KEY, String(Math.round(next))) } catch {}
-    }
-    const onMouseUp = () => { dragging.current = false }
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
-    }
-  }, [])
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -167,13 +121,15 @@ export default function App() {
         return
       }
 
-      // Cmd+T — open terminal for current issue
-      if (e.key === 't' && !e.shiftKey) {
+      // Cmd+J — toggle terminal drawer (open+focus current ticket's session when none)
+      if (e.key === 'j' && !e.shiftKey) {
+        e.preventDefault()
+        const { drawerOpen, drawerSessions } = useAppStore.getState()
         const issue = selectedIssueRef.current
-        if (issue && !terminalOpenRef.current) {
-          e.preventDefault()
-          setTerminalOpen(true)
+        if (!drawerOpen && drawerSessions.length === 0 && issue) {
           void openTerminal(80, 30)
+        } else {
+          toggleDrawer()
         }
         return
       }
@@ -186,7 +142,7 @@ export default function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [setCommandPaletteOpen, focusTab, closeTab, setTerminalOpen, openTerminal, openDashboardTab, setStandupOpen, openSettingsTab, openHelpTab])
+  }, [setCommandPaletteOpen, focusTab, closeTab, toggleDrawer, openTerminal, openDashboardTab, setStandupOpen, openSettingsTab, openHelpTab])
 
   // Inform main process which tabs are open (drives polling)
   useEffect(() => {
@@ -197,9 +153,11 @@ export default function App() {
   const updateTabRef = useRef(updateTab)
   const addNotificationRef = useRef(addNotification)
   const setProgressRef = useRef(setProgress)
+  const removeDrawerSessionRef = useRef(removeDrawerSession)
   useEffect(() => { updateTabRef.current = updateTab }, [updateTab])
   useEffect(() => { addNotificationRef.current = addNotification }, [addNotification])
   useEffect(() => { setProgressRef.current = setProgress }, [setProgress])
+  useEffect(() => { removeDrawerSessionRef.current = removeDrawerSession }, [removeDrawerSession])
 
   // Subscribe to live Linear issue updates — empty dep array so listener is created once only
   useEffect(() => {
@@ -220,13 +178,15 @@ export default function App() {
 
   // Subscribe to auto-generated progress updates — created once, uses stable refs
   useEffect(() => {
-    const unsubscribe = window.api.progress.onUpdated(async ({ ticketId, summary, newPercent }) => {
+    const unsubscribe = window.api.progress.onUpdated(async ({ ticketId, newPercent }) => {
+      let identifier = ticketId
       try {
         const p = await window.api.progress.get(ticketId)
         if (p) setProgressRef.current(ticketId, p as any)
       } catch {}
-      const truncated = summary.length > 80 ? summary.slice(0, 77) + '…' : summary
-      addNotificationRef.current(`Progress: ${newPercent}% — ${truncated}`)
+      const tab = tabsRef.current.find((t) => t.id === ticketId)
+      if (tab?.issue?.identifier) identifier = tab.issue.identifier
+      addNotificationRef.current(`${identifier} progress updated → ${newPercent}%`)
     })
     return () => { unsubscribe() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -242,49 +202,38 @@ export default function App() {
     return () => { unWarn(); unKill() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Clear stale terminalSessionId from any tab whose pty just exited —
-  // typically because the concurrent-sessions cap evicted it when a new
-  // session started on a different tab. Without this, the old tab would
-  // keep showing a green "live" dot and try to write to a dead session.
+  // Drop dead terminal sessions from the drawer. When the concurrent-sessions
+  // cap evicts a session, `evicted` is true — surface a toast.
   useEffect(() => {
     const unsubscribe = window.api.terminal.onAnyExit(({ sessionId, evicted }) => {
-      const list = tabsRef.current
-      // Only collapse the panel if another tab still has a live terminal —
-      // otherwise leave it visible so the user can read the final output.
-      const otherTerminalOpen = list.some(t => t.terminalSessionId && t.terminalSessionId !== sessionId)
-      for (const t of list) {
-        if (t.terminalSessionId === sessionId) {
-          updateTabRef.current(t.id, { terminalSessionId: null, terminalOpen: !otherTerminalOpen })
-          if (evicted) {
-            addNotificationRef.current(`${t.issue?.identifier || 'Session'} closed — only one Claude session can run at a time`)
-          }
-        }
+      const session = useAppStore.getState().drawerSessions.find((d) => d.sessionId === sessionId)
+      removeDrawerSessionRef.current(sessionId)
+      if (evicted) {
+        addNotificationRef.current(`Terminal evicted: session cap${session ? ` (${session.label})` : ''}`)
       }
     })
     return () => { unsubscribe() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-gray-100 overflow-hidden">
+    <div className="flex flex-col h-screen bg-bg text-gray-100 overflow-hidden">
       {/* Draggable title bar — full width strip, macOS traffic lights sit on top of the left ~80px */}
       <div
         style={{ WebkitAppRegion: 'drag', height: 28 } as React.CSSProperties}
-        className="flex-shrink-0 w-full bg-gray-950 flex items-center select-none"
+        className="flex-shrink-0 w-full bg-bg flex items-center select-none"
         onDoubleClick={() => window.api.window.toggleMaximize()}
       >
-        {/* Left spacer for macOS traffic lights (~80px) */}
         <div style={{ WebkitAppRegion: 'no-drag', width: 80 } as React.CSSProperties} />
-        {/* App name centred */}
         <span className="flex-1 text-center text-xs text-gray-500 font-bold tracking-widest pointer-events-none flex items-center justify-center gap-1.5 uppercase">
-          <span className="w-1.5 h-1.5 rounded-full bg-violet-500 inline-block" />
+          <span className="w-1.5 h-1.5 rounded-full bg-accent inline-block" />
           devbro
         </span>
         <div style={{ width: 80 } as React.CSSProperties} />
       </div>
 
-      {/* Body */}
+      {/* Body: sidebar (full height) + main column; terminal drawer sits below main column, full window width */}
       <div className="flex flex-1 overflow-hidden min-w-0">
-        {/* Sidebar */}
+        {/* Sidebar — full height on the left */}
         <div
           className="flex-shrink-0 flex flex-col transition-all duration-200"
           style={{ width: sidebarCollapsed ? 48 : 256 }}
@@ -303,86 +252,48 @@ export default function App() {
           </ErrorBoundary>
         </div>
 
-        {/* Main content */}
-        <div className="flex-1 flex overflow-hidden min-w-0 flex-col">
-          {/* Tab bar */}
+        {/* Main column: tab bar + content, then the drawer beneath (drawer spans this column width;
+            sidebar stays full-height per existing layout). */}
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           <ErrorBoundary label="TabBar">
             <TabBar />
           </ErrorBoundary>
 
-        {/* Content column */}
-        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          {/* Ticket view or Settings or Dashboard */}
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             <ErrorBoundary label="TicketView">
               {settingsOpen ? (
-                <ErrorBoundary label="ProjectConfigPanel">
-                  <ProjectConfigPanel />
-                </ErrorBoundary>
+                <ErrorBoundary label="ProjectConfigPanel"><ProjectConfigPanel /></ErrorBoundary>
               ) : dashboardOpen ? (
-                <ErrorBoundary label="AnalyticsDashboard">
-                  <AnalyticsDashboard />
-                </ErrorBoundary>
+                <ErrorBoundary label="AnalyticsDashboard"><AnalyticsDashboard /></ErrorBoundary>
               ) : helpOpen ? (
-                <ErrorBoundary label="HelpPanel">
-                  <HelpPanel />
-                </ErrorBoundary>
+                <ErrorBoundary label="HelpPanel"><HelpPanel /></ErrorBoundary>
               ) : activeProjectId ? (
-                <ErrorBoundary label="ProjectView">
-                  <ProjectView />
-                </ErrorBoundary>
+                <ErrorBoundary label="ProjectView"><ProjectView /></ErrorBoundary>
               ) : (
                 <TicketView />
               )}
             </ErrorBoundary>
           </div>
 
-          {/* Drag divider + terminal panel */}
-          {terminalOpen && (
-            <>
-              <div
-                onMouseDown={onDividerMouseDown}
-                className="h-1 flex-shrink-0 bg-gray-800 hover:bg-violet-500/40 cursor-row-resize transition-colors"
-                title="Drag to resize"
-              />
-              <div className="flex-shrink-0 flex flex-col" style={{ height: terminalHeight }}>
-                <ErrorBoundary label="TerminalPanel">
-                  <TerminalPanel onClose={handleCloseTerminal} />
-                </ErrorBoundary>
-              </div>
-            </>
-          )}
+          {/* App-level terminal drawer */}
+          <ErrorBoundary label="TerminalDrawer">
+            <TerminalDrawer />
+          </ErrorBoundary>
         </div>
-      </div>
       </div>
 
       {/* Command Palette overlay */}
       {commandPaletteOpen && (
-        <ErrorBoundary label="CommandPalette">
-          <CommandPalette />
-        </ErrorBoundary>
+        <ErrorBoundary label="CommandPalette"><CommandPalette /></ErrorBoundary>
       )}
 
       {/* Standup Modal overlay */}
       {standupOpen && (
-        <ErrorBoundary label="StandupModal">
-          <StandupModal onClose={() => setStandupOpen(false)} />
-        </ErrorBoundary>
+        <ErrorBoundary label="StandupModal"><StandupModal onClose={() => setStandupOpen(false)} /></ErrorBoundary>
       )}
 
-      {/* Notification stack */}
-      <div className="fixed bottom-4 right-4 z-50 space-y-2 flex flex-col items-end">
-        {notifications.map((n) => (
-          <div
-            key={n.id}
-            onClick={() => dismissNotification(n.id)}
-            style={{ transform: 'translateX(0)', transition: 'transform 150ms ease-out, opacity 150ms ease-out' }}
-            className="bg-gray-800 border border-gray-700 text-gray-200 text-xs px-3 py-2 rounded-lg shadow-lg cursor-pointer hover:bg-gray-700 max-w-xs"
-          >
-            {n.message}
-          </div>
-        ))}
-      </div>
+      {/* Toast stack */}
+      <Toasts />
     </div>
   )
 }
