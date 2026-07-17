@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, nativeImage } from 'electron'
 import path from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import dotenv from 'dotenv'
@@ -12,7 +12,15 @@ import { startMemoryWatchdog, stopMemoryWatchdog } from './memoryWatchdog'
 dotenv.config({ path: path.join(__dirname, '../../.env') })
 dotenv.config({ path: path.join(app.getAppPath(), '.env') })
 
+app.setName('devbro')
+
 let mainWindow: BrowserWindow | null = null
+
+function getAppIconPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(app.getAppPath(), 'build/icon.png')
+}
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -24,6 +32,7 @@ function createWindow(): BrowserWindow {
     autoHideMenuBar: true,
     backgroundColor: '#0f1117',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -51,7 +60,11 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.devdashboard.app')
+  electronApp.setAppUserModelId('com.devbro.app')
+
+  if (process.platform === 'darwin') {
+    app.dock.setIcon(nativeImage.createFromPath(getAppIconPath()))
+  }
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

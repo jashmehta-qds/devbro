@@ -5,6 +5,7 @@ import { ProgressDot } from './ProgressBar'
 import { FilterPanel, loadFilters, saveFilters, activeFilterCount } from './FilterPanel'
 import type { SidebarFilters } from './FilterPanel'
 import type { LinearCycle } from '../types'
+import logoUrl from '../assets/logo.png'
 
 const STATE_COLORS: Record<string, string> = {
   backlog: '#6B7280',
@@ -212,8 +213,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: { collapsed?: b
       <div className="px-4 pt-4 pb-3 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-md bg-gradient-to-br from-violet-500 to-violet-700 flex-shrink-0" />
-            <span className="text-sm font-semibold tracking-tight text-gray-100">devbro</span>
+            <img src={logoUrl} alt="" className="w-10 h-10 flex-shrink-0" />
             {isSyncing && (
               <svg className="animate-spin h-3 w-3 text-violet-500 ml-0.5" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />

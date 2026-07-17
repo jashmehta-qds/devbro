@@ -4,7 +4,7 @@
   "description": "Developer productivity tool — connect your issue tracker, run Claude Code, track progress",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/patch-electron-dev-branding.mjs && electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "dist": "npm run build && electron-builder",
@@ -14,10 +14,17 @@
     "appId": "com.devbro.app",
     "productName": "devbro",
     "mac": {
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png"
     },
     "files": [
       "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
     ]
   },
   "keywords": [

@@ -13,6 +13,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { Toasts } from './components/ui'
 import { useAppStore } from './store'
 import { useTerminal } from './hooks/useTerminal'
+import logoUrl from './assets/logo.png'
 
 const SIDEBAR_COLLAPSED_KEY = 'devbro-sidebar-collapsed'
 
@@ -225,7 +226,7 @@ export default function App() {
       >
         <div style={{ WebkitAppRegion: 'no-drag', width: 80 } as React.CSSProperties} />
         <span className="flex-1 text-center text-xs text-gray-500 font-bold tracking-widest pointer-events-none flex items-center justify-center gap-1.5 uppercase">
-          <span className="w-1.5 h-1.5 rounded-full bg-accent inline-block" />
+          <img src={logoUrl} alt="" className="w-3.5 h-3.5" />
           devbro
         </span>
         <div style={{ width: 80 } as React.CSSProperties} />

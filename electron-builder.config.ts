@@ -1,8 +1,8 @@
 import type { Configuration } from 'electron-builder'
 
 const config: Configuration = {
-  appId: 'com.devdashboard.app',
-  productName: 'Dev Dashboard',
+  appId: 'com.devbro.app',
+  productName: 'devbro',
   directories: {
     buildResources: 'build'
   },
@@ -12,7 +12,8 @@ const config: Configuration = {
   ],
   mac: {
     target: 'dmg',
-    category: 'public.app-category.developer-tools'
+    category: 'public.app-category.developer-tools',
+    icon: 'build/icon.png'
   },
   win: {
     target: 'nsis'
@@ -21,6 +22,10 @@ const config: Configuration = {
     target: 'AppImage'
   },
   extraResources: [
+    {
+      from: 'build/icon.png',
+      to: 'icon.png'
+    },
     {
       from: 'resources/',
       to: './'
