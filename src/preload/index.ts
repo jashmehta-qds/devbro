@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('api', {
 
   tabs: {
     setOpen: (tabIds: string[]) => ipcRenderer.invoke('tabs:setOpen', tabIds),
+    load: () => ipcRenderer.invoke('tabs:load'),
+    save: (tabs: Array<{ id: string; issueData: any; pinned?: boolean }>) => ipcRenderer.invoke('tabs:save', tabs),
   },
 
   notes: {
@@ -29,14 +31,36 @@ contextBridge.exposeInMainWorld('api', {
 
   checklist: {
     get: (ticketId: string) => ipcRenderer.invoke('checklist:get', ticketId),
-    save: (ticketId: string, items: any[]) => ipcRenderer.invoke('checklist:save', ticketId, items)
+    save: (ticketId: string, items: any[]) => ipcRenderer.invoke('checklist:save', ticketId, items),
+    generate: (ticketId: string, title: string, description: string) => ipcRenderer.invoke('checklist:generate', ticketId, title, description)
   },
 
   skills: {
     list: (ticketId: string) => ipcRenderer.invoke('skills:list', ticketId),
     add: (ticketId: string, name: string, command: string) =>
       ipcRenderer.invoke('skills:add', ticketId, name, command),
-    delete: (skillId: string) => ipcRenderer.invoke('skills:delete', skillId)
+    delete: (skillId: string) => ipcRenderer.invoke('skills:delete', skillId),
+    readRepo: (repoPath: string) => ipcRenderer.invoke('skills:readRepo', repoPath),
+    writeRepo: (repoPath: string, skills: Array<{ name: string; description?: string; command: string }>) =>
+      ipcRenderer.invoke('skills:writeRepo', repoPath, skills),
+  },
+
+  shell: {
+    openPath: (filePath: string) => ipcRenderer.invoke('shell:openPath', filePath),
+  },
+
+  skillPkg: {
+    list: () => ipcRenderer.invoke('skillPkg:list'),
+    install: (url: string) => ipcRenderer.invoke('skillPkg:install', url),
+    uninstall: (slug: string) => ipcRenderer.invoke('skillPkg:uninstall', slug),
+    update: (slug: string) => ipcRenderer.invoke('skillPkg:update', slug),
+    apply: (slug: string, ctx: any) => ipcRenderer.invoke('skillPkg:apply', slug, ctx),
+    discover: (force?: boolean) => ipcRenderer.invoke('skillPkg:discover', force),
+    getRegistryUrl: () => ipcRenderer.invoke('skillPkg:getRegistryUrl'),
+    setRegistryUrl: (url: string) => ipcRenderer.invoke('skillPkg:setRegistryUrl', url),
+    openFolder: (slug: string) => ipcRenderer.invoke('skillPkg:openFolder', slug),
+    getBody: (slug: string) => ipcRenderer.invoke('skillPkg:getBody', slug),
+    appliedHistory: (ticketId?: string) => ipcRenderer.invoke('skillPkg:appliedHistory', ticketId),
   },
 
   progress: {
@@ -54,7 +78,13 @@ contextBridge.exposeInMainWorld('api', {
   eli5: {
     get: (ticketId: string) => ipcRenderer.invoke('eli5:get', ticketId),
     generate: (ticketId: string, title: string, description: string) =>
-      ipcRenderer.invoke('eli5:generate', ticketId, title, description)
+      ipcRenderer.invoke('eli5:generate', ticketId, title, description),
+    explainDiff: (ticketId: string, issue: any, repoPaths: string | string[]) =>
+      ipcRenderer.invoke('eli5:explainDiff', ticketId, issue, repoPaths),
+    risks: (ticketId: string, issue: any, repoPaths?: string | string[]) =>
+      ipcRenderer.invoke('eli5:risks', ticketId, issue, repoPaths),
+    draftPr: (ticketId: string, issue: any, repoPaths?: string | string[]) =>
+      ipcRenderer.invoke('eli5:draftPr', ticketId, issue, repoPaths),
   },
 
   projectConfig: {
@@ -104,6 +134,19 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener(channel, listener)
     },
 
+    onContextInjecting: (sessionId: string, callback: () => void) => {
+      const channel = `terminal:contextInjecting:${sessionId}`
+      const listener = () => callback()
+      ipcRenderer.on(channel, listener)
+      return () => ipcRenderer.removeListener(channel, listener)
+    },
+    onContextReady: (sessionId: string, callback: () => void) => {
+      const channel = `terminal:contextReady:${sessionId}`
+      const listener = () => callback()
+      ipcRenderer.on(channel, listener)
+      return () => ipcRenderer.removeListener(channel, listener)
+    },
+
     onAnyExit: (callback: (payload: { sessionId: string; code: number; evicted: boolean }) => void) => {
       const listener = (_event: any, payload: any) => callback(payload)
       ipcRenderer.on('terminal:anyExit', listener)
@@ -121,6 +164,10 @@ contextBridge.exposeInMainWorld('api', {
   window: {
     toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
     isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+  },
+
+  workDir: {
+    get: () => ipcRenderer.invoke('workDir:get'),
   },
 
   analytics: {
@@ -174,6 +221,22 @@ contextBridge.exposeInMainWorld('api', {
     delete: (skillId: string) => ipcRenderer.invoke('globalSkills:delete', skillId),
   },
 
+  skillLinks: {
+    listForTicket: (ticketId: string, projectId: string | null) =>
+      ipcRenderer.invoke('skillLinks:listForTicket', ticketId, projectId),
+    setSingle: (
+      slug: string,
+      scope: 'global' | 'project' | 'ticket',
+      on: boolean,
+      ctx: { projectId?: string; ticketId?: string }
+    ) => ipcRenderer.invoke('skillLinks:setSingle', slug, scope, on, ctx),
+    toggleBatch: (
+      slugs: string[],
+      scope: 'global' | 'project' | 'ticket',
+      ctx: { projectId?: string; ticketId?: string }
+    ) => ipcRenderer.invoke('skillLinks:toggleBatch', slugs, scope, ctx),
+  },
+
   standup: {
     generate: () => ipcRenderer.invoke('standup:generate'),
   },
@@ -216,5 +279,13 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on('ai:done', listener)
       return () => ipcRenderer.removeListener('ai:done', listener)
     },
+  },
+
+  github: {
+    testAuth: () => ipcRenderer.invoke('github:testAuth'),
+    getPrForBranch: (repoPath: string, branch: string) => ipcRenderer.invoke('github:getPrForBranch', repoPath, branch),
+    createPr: (repoPath: string, opts: { title: string; body: string; head: string; base: string }) => ipcRenderer.invoke('github:createPr', repoPath, opts),
+    createBranch: (repoPath: string, branchName: string, base?: string) => ipcRenderer.invoke('github:createBranch', repoPath, branchName, base),
+    draftPrBody: (repoPath: string, branch: string, base: string, ticketTitle: string, ticketDesc: string) => ipcRenderer.invoke('github:draftPrBody', repoPath, branch, base, ticketTitle, ticketDesc),
   },
 })

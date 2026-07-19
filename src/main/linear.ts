@@ -52,6 +52,7 @@ async function serializeIssue(issue: any, projectOverride?: { id: string; name: 
     labels: labels.nodes.map((l: any) => ({ id: l.id, name: l.name, color: l.color })),
     cycleId: cycleRaw?.id ?? null,
     milestoneId: milestoneRaw?.id ?? null,
+    dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString() : null,
   }
 }
 
@@ -260,6 +261,7 @@ export async function fetchIssue(issueId: string) {
     createdAt: issue.createdAt.toISOString(),
     updatedAt: issue.updatedAt.toISOString(),
     url: issue.url,
-    labels: labels.nodes.map((l: any) => ({ id: l.id, name: l.name, color: l.color }))
+    labels: labels.nodes.map((l: any) => ({ id: l.id, name: l.name, color: l.color })),
+    dueDate: issue.dueDate ? new Date(issue.dueDate).toISOString() : null,
   }
 }

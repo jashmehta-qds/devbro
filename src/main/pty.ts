@@ -8,22 +8,7 @@ import { execSync } from 'child_process'
 import { getDb, getWorkDir } from './db'
 import { CONFIG_FILE } from './configLog'
 import { generateAndAppendProgress } from './progressSummary'
-
-// Revert CLAUDE.md to its git-tracked state (if tracked), then append context.
-// Prevents overwriting project rules that live in the committed CLAUDE.md.
-function writeContextToClaude(claudePath: string, contextContent: string): void {
-  const dir = path.dirname(claudePath)
-  // Restore the committed version if the file is tracked
-  try {
-    execSync('git checkout HEAD -- CLAUDE.md', { cwd: dir, stdio: 'ignore' })
-  } catch {
-    // Not tracked — wipe any leftover content so we start clean
-    try { fs.writeFileSync(claudePath, '', 'utf-8') } catch {}
-  }
-  const existing = fs.existsSync(claudePath) ? fs.readFileSync(claudePath, 'utf-8') : ''
-  const separator = existing.trimEnd().length > 0 ? '\n\n---\n\n' : ''
-  fs.writeFileSync(claudePath, existing.trimEnd() + separator + contextContent, 'utf-8')
-}
+import { readSkill } from './skills'
 
 interface PtySession {
   process: pty.IPty
@@ -43,6 +28,9 @@ interface PtySession {
   cleanup?: () => void
   // Throttled activity heartbeat (set in createTerminal).
   recordHeartbeat?: () => void
+  // Fires once when Claude's `❯` prompt is first seen. Nulled after use.
+  performInject?: () => void
+  contextInjected?: boolean
 }
 
 // Hard cap. Each pty hosts a Claude subprocess which can balloon to multi-GB
@@ -179,8 +167,8 @@ export async function createTerminal(
   const home = process.env.HOME || os.homedir()
   const cwd = resolveCwd(ticketId, projectId, repoName)
 
-  // Revert CLAUDE.md to committed state then append ticket context
-  writeContextToClaude(path.join(cwd, 'CLAUDE.md'), contextContent)
+  // ponytail: repo stays untouched. Context is piped into claude's stdin as the
+  // first "user message" via bracketed paste — see the injection timer below.
 
   const storedSessionId = getStoredClaudeSessionId(ticketId)
 
@@ -277,6 +265,12 @@ export async function createTerminal(
 
   proc.onData((data) => {
     recordHeartbeat()
+    // Detect Claude's prompt so we can inject the moment it's ready.
+    if (session.performInject && !session.contextInjected && data.includes('❯')) {
+      const fn = session.performInject
+      session.performInject = undefined
+      setTimeout(fn, 400) // small breather so the prompt is fully rendered
+    }
     chunks.push(data)
     chunksLen += data.length
     if (chunksLen >= MAX_BUFFER) {
@@ -294,6 +288,38 @@ export async function createTerminal(
     }
   }, 600)
 
+  // Context injection: detect Claude's `❯` prompt in stdout, then send a short
+  // "Read this file" instruction. Robust against slow-booting forks (fixed
+  // timers guess wrong). Skip on --resume; the resumed session already has
+  // prior context. Fallback timer at 20s in case the marker isn't seen.
+  const override = pendingContextOverride.get(ticketId)
+  if (override !== undefined) pendingContextOverride.delete(ticketId)
+  const effectiveContext = override ?? contextContent
+
+  const performInject = () => {
+    if (!sessions.has(sessionId) || session.contextInjected) return
+    session.contextInjected = true
+    if (win && !win.isDestroyed()) win.webContents.send(`terminal:contextInjecting:${sessionId}`)
+    try {
+      const ctxDir = path.join(process.env.HOME || os.homedir(), '.devbro', 'context')
+      fs.mkdirSync(ctxDir, { recursive: true })
+      const ctxPath = path.join(ctxDir, `${ticketId}.session.md`)
+      fs.writeFileSync(ctxPath, effectiveContext, 'utf-8')
+      const msg = `Read ${ctxPath} for this session's context. It lists ticket details + paths to guidelines (mandatory — read all now) and skills (load any that become relevant). Do the initial reads then confirm you're ready.\r`
+      proc.write(msg)
+      console.log('[devbro] injected context for', ticketId, '→', ctxPath)
+    } catch (err) {
+      console.error('[devbro] inject failed:', err)
+    }
+    // Give Claude a beat to start streaming its acknowledgment before unblocking UI.
+    setTimeout(() => {
+      if (win && !win.isDestroyed()) win.webContents.send(`terminal:contextReady:${sessionId}`)
+    }, 1200)
+  }
+  session.performInject = storedSessionId ? undefined : performInject
+
+  const contextInjectFallbackTimer = storedSessionId ? null : setTimeout(performInject, 20000)
+
   const detectTimer = setTimeout(() => {
     if (!storedSessionId) {
       const detected = detectLatestClaudeSession(cwd)
@@ -304,6 +330,7 @@ export async function createTerminal(
   session.cleanup = () => {
     clearTimeout(launchTimer)
     clearTimeout(detectTimer)
+    if (contextInjectFallbackTimer) clearTimeout(contextInjectFallbackTimer)
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
     // Drop any remaining buffered data — we're tearing down.
     chunks.length = 0
@@ -354,6 +381,29 @@ export function writeToTerminal(sessionId: string, data: string): void {
   if (session) {
     session.recordHeartbeat?.()
     session.process.write(data)
+  }
+}
+
+// Pending context override — consumed once by the next createTerminal for this ticket.
+const pendingContextOverride = new Map<string, string>()
+export function setPendingContextOverride(ticketId: string, content: string): void {
+  pendingContextOverride.set(ticketId, content)
+}
+
+// Refresh context mid-session: rewrite the shared file + ask claude to re-read.
+export function reinjectContext(sessionId: string, content: string): boolean {
+  const session = sessions.get(sessionId)
+  if (!session) return false
+  try {
+    const ctxDir = path.join(process.env.HOME || os.homedir(), '.devbro', 'context')
+    fs.mkdirSync(ctxDir, { recursive: true })
+    const ctxPath = path.join(ctxDir, `${session.ticketId}.session.md`)
+    fs.writeFileSync(ctxPath, content, 'utf-8')
+    session.process.write(`Re-read ${ctxPath} — the context has been updated. Reload it and continue.\r`)
+    return true
+  } catch (err) {
+    console.error('[devbro] reinject failed:', err)
+    return false
   }
 }
 
@@ -605,25 +655,54 @@ export async function buildContextContent(
     lines.push('')
   }
 
-  // === Global Guidelines (markdown docs — always-on knowledge) ===
+  // === Guidelines (mandatory — written to disk, referenced by path so
+  // context stays small; Claude Reads them lazily) ===
+  const ctxDir = path.join(home, '.devbro', 'context')
+  try { fs.mkdirSync(ctxDir, { recursive: true }) } catch {}
+  const guidelinePaths: string[] = []
   if (globalSkills.length > 0) {
-    lines.push('## Global Guidelines')
-    for (const g of globalSkills) {
-      lines.push(`### ${g.name}`)
-      lines.push(g.command)
-      lines.push('')
-    }
+    const p = path.join(ctxDir, 'guidelines-global.md')
+    try {
+      fs.writeFileSync(p, globalSkills.map((g: any) => `# ${g.name}\n\n${g.command}\n`).join('\n---\n\n'), 'utf-8')
+      guidelinePaths.push(p)
+    } catch {}
+  }
+  if (projectId && projectSkills.length > 0) {
+    const p = path.join(ctxDir, `guidelines-project-${projectId}.md`)
+    try {
+      fs.writeFileSync(p, projectSkills.map((g: any) => `# ${g.name}\n\n${g.command}\n`).join('\n---\n\n'), 'utf-8')
+      guidelinePaths.push(p)
+    } catch {}
+  }
+  if (guidelinePaths.length > 0) {
+    lines.push('## Guidelines (mandatory — read all)')
+    for (const p of guidelinePaths) lines.push(`- ${p}`)
+    lines.push('')
   }
 
-  // === Project Playbook (markdown docs — knowledge for this project) ===
-  if (projectSkills.length > 0) {
-    lines.push('## Project Playbook')
-    for (const g of projectSkills) {
-      lines.push(`### ${g.name}`)
-      lines.push(g.command)
+  // === Attached Skills (paths — Claude Reads them lazily as relevant) ===
+  try {
+    const globalLinks = db.prepare('SELECT slug FROM global_skill_links').all() as Array<{ slug: string }>
+    const projectLinks = projectId
+      ? db.prepare('SELECT slug FROM project_skill_links WHERE project_id = ?').all(projectId) as Array<{ slug: string }>
+      : []
+    const ticketLinks = db.prepare('SELECT slug FROM ticket_skill_links WHERE ticket_id = ?').all(ticketId) as Array<{ slug: string }>
+    const seen = new Set<string>()
+    const orderedSlugs: string[] = []
+    for (const row of [...globalLinks, ...projectLinks, ...ticketLinks]) {
+      if (!seen.has(row.slug)) { seen.add(row.slug); orderedSlugs.push(row.slug) }
+    }
+    const manifests = (await Promise.all(orderedSlugs.map(s => readSkill(s)))).filter((m): m is NonNullable<typeof m> => !!m)
+    if (manifests.length > 0) {
+      lines.push('## Attached Skills (load any that apply to the current work)')
+      for (const m of manifests) {
+        const desc = m.description ? ` — ${m.description}` : ''
+        const kind = m.type === 'command' ? ' [command]' : ''
+        lines.push(`- ${m._dir}/SKILL.md${kind}${desc}`)
+      }
       lines.push('')
     }
-  }
+  } catch {}
 
   // === Ticket Commands (runnable shortcuts) ===
   if (ticketSkills.length > 0) {
@@ -671,6 +750,17 @@ export async function buildContextContent(
   lines.push('')
 
   void home // unused but kept for potential expansion
+
+  // Extra per-ticket context appended by `apply_to: claude_md` skills (devbro-owned, off-repo)
+  try {
+    const extraPath = path.join(home, '.devbro', 'context', `${ticketId}.md`)
+    if (fs.existsSync(extraPath)) {
+      const extra = fs.readFileSync(extraPath, 'utf-8').trim()
+      if (extra) {
+        lines.push('---', '', '## Attached CLAUDE.md snippets', '', extra, '')
+      }
+    }
+  } catch {}
 
   return lines.join('\n')
 }

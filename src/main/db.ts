@@ -274,6 +274,56 @@ const MIGRATIONS: Array<{ v: number; sql: string }> = [
       CREATE INDEX IF NOT EXISTS idx_session_activity_ticket ON session_activity(ticket_id);
     `,
   },
+  {
+    v: 22,
+    sql: `
+      CREATE TABLE IF NOT EXISTS open_tabs (
+        id TEXT PRIMARY KEY,
+        issue_data TEXT NOT NULL,
+        tab_order INTEGER NOT NULL,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        saved_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_open_tabs_pinned_order ON open_tabs(pinned DESC, tab_order ASC);
+    `,
+  },
+  {
+    v: 23,
+    sql: `
+      CREATE TABLE IF NOT EXISTS skill_applications (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL,
+        ticket_id TEXT,
+        applied_at INTEGER NOT NULL,
+        outcome TEXT NOT NULL DEFAULT 'ok'
+      );
+      CREATE INDEX IF NOT EXISTS idx_skill_apps_ticket ON skill_applications(ticket_id);
+      CREATE INDEX IF NOT EXISTS idx_skill_apps_slug ON skill_applications(slug);
+    `,
+  },
+  {
+    v: 24,
+    sql: `
+      CREATE TABLE IF NOT EXISTS global_skill_links (
+        slug TEXT PRIMARY KEY,
+        linked_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS project_skill_links (
+        project_id TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        linked_at INTEGER NOT NULL,
+        PRIMARY KEY (project_id, slug)
+      );
+      CREATE TABLE IF NOT EXISTS ticket_skill_links (
+        ticket_id TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        linked_at INTEGER NOT NULL,
+        PRIMARY KEY (ticket_id, slug)
+      );
+      CREATE INDEX IF NOT EXISTS idx_proj_skill_links_pid ON project_skill_links(project_id);
+      CREATE INDEX IF NOT EXISTS idx_tkt_skill_links_tid  ON ticket_skill_links(ticket_id);
+    `,
+  },
 ]
 
 function columnExists(db: Database.Database, table: string, column: string): boolean {

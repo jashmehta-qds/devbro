@@ -5,10 +5,12 @@ import { TerminalDrawer } from './components/TerminalDrawer'
 import { ProjectConfigPanel } from './components/ProjectConfigPanel'
 import { AnalyticsDashboard } from './components/AnalyticsDashboard'
 import { HelpPanel } from './components/HelpPanel'
+import { SkillsPage } from './components/SkillsPage'
 import { ProjectView } from './components/ProjectView'
 import { TabBar } from './components/TabBar'
 import { CommandPalette } from './components/CommandPalette'
 import { StandupModal } from './components/StandupModal'
+import { SkillOutputModal } from './components/SkillOutputModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Toasts } from './components/ui'
 import { useAppStore } from './store'
@@ -26,7 +28,9 @@ export default function App() {
   const settingsOpen = store.settingsOpen
   const dashboardOpen = store.dashboardOpen
   const helpOpen = store.helpOpen
+  const skillsOpen = store.skillsOpen
   const standupOpen = store.standupOpen
+  const skillOutput = store.skillOutput
   const activeProjectId = store.activeProjectId
   const commandPaletteOpen = store.commandPaletteOpen
   const tabs = store.tabs
@@ -38,6 +42,7 @@ export default function App() {
     openSettingsTab,
     openDashboardTab,
     openHelpTab,
+    openSkillsTab,
     focusTab,
     closeTab,
     updateTab,
@@ -45,6 +50,9 @@ export default function App() {
     setProgress,
     toggleDrawer,
     removeDrawerSession,
+    togglePinTab,
+    reopenLastClosed,
+    initTabs,
   } = store
   const { openTerminal } = useTerminal()
 
@@ -140,15 +148,47 @@ export default function App() {
       if (e.key === 'u' && !e.shiftKey) { e.preventDefault(); setStandupOpen(true); return }
       if (e.key === ',')               { e.preventDefault(); openSettingsTab(); return }
       if (e.key === '?' || e.key === '/') { e.preventDefault(); openHelpTab(); return }
+      if (e.key === 'e' && !e.shiftKey) { e.preventDefault(); openSkillsTab(); return }
+
+      // Cmd+P — toggle pin on active tab
+      if (e.key === 'p' && !e.shiftKey) {
+        const id = activeTabIdRef.current
+        if (id) {
+          e.preventDefault()
+          togglePinTab(id)
+        }
+        return
+      }
+
+      // Cmd+Shift+T — reopen last closed tab
+      if (e.shiftKey && e.key === 'T') {
+        e.preventDefault()
+        reopenLastClosed()
+        return
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [setCommandPaletteOpen, focusTab, closeTab, toggleDrawer, openTerminal, openDashboardTab, setStandupOpen, openSettingsTab, openHelpTab])
+  }, [setCommandPaletteOpen, focusTab, closeTab, toggleDrawer, openTerminal, openDashboardTab, setStandupOpen, openSettingsTab, openHelpTab, openSkillsTab])
 
   // Inform main process which tabs are open (drives polling)
   useEffect(() => {
     window.api.tabs.setOpen(tabs.map((t) => t.id)).catch(() => {})
   }, [tabs])
+
+  // Load tabs from SQLite on mount
+  useEffect(() => {
+    initTabs().catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // First-run: open Help if no connector is configured yet
+  useEffect(() => {
+    if (localStorage.getItem('devbro-seen-help') === '1') return
+    window.api.connector.getActive().then(({ id }) => {
+      if (!id) openHelpTab()
+      localStorage.setItem('devbro-seen-help', '1')
+    }).catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep stable refs to store actions so IPC subscriptions never need to re-subscribe
   const updateTabRef = useRef(updateTab)
@@ -268,6 +308,8 @@ export default function App() {
                 <ErrorBoundary label="AnalyticsDashboard"><AnalyticsDashboard /></ErrorBoundary>
               ) : helpOpen ? (
                 <ErrorBoundary label="HelpPanel"><HelpPanel /></ErrorBoundary>
+              ) : skillsOpen ? (
+                <ErrorBoundary label="SkillsPage"><SkillsPage /></ErrorBoundary>
               ) : activeProjectId ? (
                 <ErrorBoundary label="ProjectView"><ProjectView /></ErrorBoundary>
               ) : (
@@ -291,6 +333,13 @@ export default function App() {
       {/* Standup Modal overlay */}
       {standupOpen && (
         <ErrorBoundary label="StandupModal"><StandupModal onClose={() => setStandupOpen(false)} /></ErrorBoundary>
+      )}
+
+      {/* Skill output modal (prompt-stream skills) */}
+      {skillOutput && (
+        <ErrorBoundary label="SkillOutputModal">
+          <SkillOutputModal callId={skillOutput.callId} slug={skillOutput.slug} onClose={() => store.closeSkillOutput()} />
+        </ErrorBoundary>
       )}
 
       {/* Toast stack */}

@@ -8,8 +8,9 @@ interface ChecklistWidgetProps {
 }
 
 export function ChecklistWidget({ ticketId }: ChecklistWidgetProps) {
-  const { checklists, setChecklist } = useAppStore()
+  const { checklists, setChecklist, selectedIssue } = useAppStore()
   const [newItemText, setNewItemText] = useState('')
+  const [generating, setGenerating] = useState(false)
   const checklist = checklists[ticketId]
   const items = checklist?.items || []
 
@@ -58,15 +59,40 @@ export function ChecklistWidget({ ticketId }: ChecklistWidgetProps) {
 
   const doneCount = items.filter((i) => i.done).length
 
+  const autoGenerate = async () => {
+    if (!selectedIssue || generating) return
+    if (items.length > 0 && !window.confirm('Append AI-generated items to the existing checklist?')) return
+    setGenerating(true)
+    try {
+      const generated = await window.api.checklist.generate(ticketId, selectedIssue.title, selectedIssue.description || '')
+      if (generated && generated.length > 0) {
+        const newItems = [...items, ...generated.map((text) => ({ id: uuidv4(), text, done: false }))]
+        await saveItems(newItems)
+      }
+    } catch (err) {
+      console.error('Failed to auto-generate checklist:', err)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Checklist</h3>
-        {items.length > 0 && (
-          <span className="text-xs text-gray-600">
-            {doneCount}/{items.length} done
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {items.length > 0 && (
+            <span className="text-xs text-gray-600">{doneCount}/{items.length} done</span>
+          )}
+          <button
+            onClick={autoGenerate}
+            disabled={generating || !selectedIssue}
+            className="inline-flex items-center gap-1 h-5 px-1.5 rounded-md text-[10px] font-medium bg-violet-500/10 text-violet-300 border border-violet-500/20 hover:bg-violet-500/20 disabled:opacity-50 transition-colors"
+            title="Generate checklist items from the ticket description"
+          >
+            {generating ? '…' : '✨'} {generating ? 'Generating' : 'Auto'}
+          </button>
+        </div>
       </div>
 
       {items.length > 0 ? (

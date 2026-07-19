@@ -1,5 +1,24 @@
 import React, { useState, useEffect, useCallback } from 'react'
 
+function toSlackMd(md: string): string {
+  try {
+    let result = md
+    // Convert **bold** → *bold*
+    result = result.replace(/\*\*(.+?)\*\*/g, '*$1*')
+    // Convert *italic* → _italic_ (but not the result of above conversion)
+    // Only convert single asterisks that aren't already part of markdown
+    result = result.replace(/(?<!\*)(?<!\*\*)\*([^*]+?)\*(?!\*)/g, '_$1_')
+    // Convert - item → • item
+    result = result.replace(/^- /gm, '• ')
+    // Convert # Heading → *Heading*
+    result = result.replace(/^# (.+)$/gm, '*$1*')
+    // Code fences and inline code stay as-is (Slack renders them)
+    return result
+  } catch {
+    return md
+  }
+}
+
 function renderStandup(text: string) {
   return text.split('\n').map((line, i) => {
     if (line.startsWith('**') && line.endsWith('**')) {
@@ -16,7 +35,7 @@ function renderStandup(text: string) {
 export function StandupModal({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true)
   const [result, setResult] = useState<{ standup: string; raw: string; usedAI: boolean } | null>(null)
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'clipboard' | 'slack' | false>(false)
   const [showRaw, setShowRaw] = useState(false)
   const [streamingText, setStreamingText] = useState('')
 
@@ -49,10 +68,11 @@ export function StandupModal({ onClose }: { onClose: () => void }) {
     generate()
   }, [generate])
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(result?.standup ?? '')
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const handleCopy = (format: 'clipboard' | 'slack' = 'clipboard') => {
+    const text = format === 'slack' ? toSlackMd(result?.standup ?? '') : (result?.standup ?? '')
+    navigator.clipboard.writeText(text)
+    setCopied(format)
+    setTimeout(() => setCopied(false), 1500)
   }
 
   // Close on Escape
@@ -147,29 +167,53 @@ export function StandupModal({ onClose }: { onClose: () => void }) {
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-700">
-          <button
-            onClick={handleCopy}
-            disabled={loading || !result}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded transition-colors"
-          >
-            {copied ? (
-              <>
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                Copied!
-              </>
-            ) : (
-              <>
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                Copy to clipboard
-              </>
-            )}
-          </button>
+        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-700 gap-2">
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleCopy('clipboard')}
+              disabled={loading || !result}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded transition-colors"
+            >
+              {copied === 'clipboard' ? (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  Copy
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => handleCopy('slack')}
+              disabled={loading || !result}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-gray-100 text-xs rounded transition-colors"
+            >
+              {copied === 'slack' ? (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                  Slack
+                </>
+              )}
+            </button>
+          </div>
           <button
             onClick={onClose}
             className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors"

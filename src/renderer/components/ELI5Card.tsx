@@ -1,28 +1,32 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
+import { Markdown } from './Markdown'
 
 interface ELI5CardProps {
   ticketId: string
   title: string
   description?: string
+  issue?: any
+  repoPaths?: string[]
 }
 
-export function ELI5Card({ ticketId, title, description }: ELI5CardProps) {
+type ELI5Action = 'explain' | 'diff' | 'risks' | 'pr'
+
+export function ELI5Card({ ticketId, title, description, issue, repoPaths = [] }: ELI5CardProps) {
   const { eli5Cache, eli5Loading, setEli5, setEli5Loading } = useAppStore()
 
   const content = eli5Cache[ticketId]
   const isLoading = eli5Loading[ticketId]
   const [error, setError] = useState<string | null>(null)
   const [streamingText, setStreamingText] = useState('')
+  const [activeAction, setActiveAction] = useState<ELI5Action>('explain')
 
   // Collapsed by default when content already exists
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
     // Only check SQLite cache on mount — don't auto-call the API
-    window.api.eli5.get(ticketId).then((cached: string | null) => {
-      if (cached) setEli5(ticketId, cached)
-    }).catch(() => {})
+    loadELI5()
   }, [ticketId])
 
   // When content loads in, don't auto-expand — keep collapsed
@@ -42,39 +46,58 @@ export function ELI5Card({ ticketId, title, description }: ELI5CardProps) {
     return () => { offChunk(); offDone() }
   }, [isLoading])
 
-  const loadELI5 = async (force: boolean = false) => {
-    if (!force) {
-      try {
-        const cached = await window.api.eli5.get(ticketId)
-        if (cached) {
-          setEli5(ticketId, cached)
-          setError(null)
-          return
-        }
-      } catch {
-        // ignore
-      }
-    }
-
+  const generateAction = async (action: ELI5Action, force: boolean = false) => {
+    setActiveAction(action)
     setStreamingText('')
     setEli5Loading(ticketId, true)
     setError(null)
     try {
-      const result = await window.api.eli5.generate(ticketId, title, description || '')
+      let result: string | null = null
+      switch (action) {
+        case 'explain':
+          result = await window.api.eli5.generate(ticketId, title, description || '')
+          break
+        case 'diff':
+          if (repoPaths.length === 0) throw new Error('No repo path available')
+          result = await window.api.eli5.explainDiff(ticketId, issue, repoPaths)
+          break
+        case 'risks':
+          result = await window.api.eli5.risks(ticketId, issue, repoPaths)
+          break
+        case 'pr':
+          result = await window.api.eli5.draftPr(ticketId, issue, repoPaths)
+          break
+      }
       if (result) {
         setEli5(ticketId, result)
         setExpanded(true)
         setError(null)
       } else {
-        setError('Claude CLI failed to generate explanation. Is the claude command available?')
+        setError('Claude CLI failed to generate. Is the claude command available?')
       }
     } catch (err: any) {
       console.error('ELI5 generation failed:', err.message)
-      setError(err.message || 'Failed to generate explanation')
+      setError(err.message || 'Failed to generate')
     } finally {
       setEli5Loading(ticketId, false)
     }
   }
+
+  const loadELI5 = async () => {
+    try {
+      const cached = await window.api.eli5.get(ticketId)
+      if (cached) {
+        setEli5(ticketId, cached)
+        setError(null)
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const hasRepo = repoPaths.length > 0
+  const actionLabels = { explain: 'Explain', diff: 'Diff', risks: 'Risks', pr: 'PR Desc' }
+  const actions: ELI5Action[] = ['explain', 'diff', 'risks', 'pr']
 
   return (
     <div className="bg-violet-950/30 border border-violet-500/20 rounded-lg overflow-hidden">
@@ -89,7 +112,7 @@ export function ELI5Card({ ticketId, title, description }: ELI5CardProps) {
           <span className="text-gray-600">{expanded ? '▲' : '▼'}</span>
         </button>
         <button
-          onClick={() => { setExpanded(true); loadELI5(true) }}
+          onClick={() => { setExpanded(true); generateAction(activeAction) }}
           disabled={isLoading}
           className="text-xs text-violet-500 hover:text-violet-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
@@ -107,18 +130,48 @@ export function ELI5Card({ ticketId, title, description }: ELI5CardProps) {
         </button>
       </div>
 
+      {/* Action chips */}
+      <div className="px-3 py-2 border-t border-violet-500/10 flex gap-2 flex-wrap">
+        {actions.map((action) => {
+          const isActive = activeAction === action
+          const isDisabled = !hasRepo && (action === 'diff' || action === 'risks' || action === 'pr')
+          const label = actionLabels[action]
+          return (
+            <div key={action} title={isDisabled ? 'No repo linked' : ''}>
+              <button
+                onClick={() => { setExpanded(true); generateAction(action) }}
+                disabled={isLoading || isDisabled}
+                className={`inline-flex items-center h-6 px-2.5 rounded-md text-[11px] font-medium border transition-colors ${
+                  isActive && !isDisabled
+                    ? 'text-violet-300 bg-violet-500/10 border-violet-500/20'
+                    : isDisabled
+                      ? 'text-gray-600 bg-gray-900 border-gray-800 cursor-not-allowed'
+                      : 'text-gray-400 bg-gray-900 border-gray-800 hover:border-gray-700'
+                }`}
+              >
+                {label}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
       {/* Collapsible body */}
       {expanded && (
         <div className="px-3 pb-3 border-t border-violet-500/10">
           {isLoading ? (
-            <p className="text-gray-300 text-sm leading-relaxed pt-2">{streamingText || 'Generating…'}</p>
+            <div className="text-gray-300 text-sm leading-relaxed pt-2">
+              {streamingText ? <Markdown>{streamingText}</Markdown> : 'Generating…'}
+            </div>
           ) : error ? (
             <p className="text-red-400 text-xs italic pt-2">{error}</p>
           ) : content ? (
-            <p className="text-gray-300 text-sm leading-relaxed pt-2">{content}</p>
+            <div className="text-gray-300 text-sm leading-relaxed pt-2">
+              <Markdown>{content}</Markdown>
+            </div>
           ) : (
             <p className="text-gray-600 text-xs italic pt-2">
-              Click "Generate" to explain this ticket in simple terms using Claude.
+              Click an action button to generate insights using Claude.
             </p>
           )}
         </div>

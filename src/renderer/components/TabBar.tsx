@@ -28,12 +28,15 @@ export function TabBar() {
     }
   }
 
+  // Sort pinned tabs first, then by original order
+  const sortedTabs = [...tabs].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
+
   if (tabs.length === 0 && projectTabs.length === 0) return null
 
   return (
     <div className="flex items-stretch h-9 bg-gray-950 border-b border-gray-800 overflow-hidden">
       {/* Issue tabs */}
-      {tabs.map((tab) => {
+      {sortedTabs.map((tab) => {
         const isActive = tab.id === activeTabId
         const stateColor = STATE_COLORS[tab.issue.state.type] || '#6B7280'
         const hasTerminal = drawerSessions.some((d) => d.ticketId === tab.id)
@@ -50,7 +53,13 @@ export function TabBar() {
             onClick={() => focusTab(tab.id)}
           >
             <div className="flex items-center gap-1.5 leading-none">
-              <span className="w-1 h-1 rounded-full flex-shrink-0" style={{ backgroundColor: stateColor }} />
+              {tab.pinned ? (
+                <svg className="w-2.5 h-2.5 text-violet-400 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M16 2H8C6.9 2 6 2.9 6 4v5.41L2.71 4.71C2.32 4.32 1.68 4.32 1.29 4.71C0.9 5.1 0.9 5.74 1.29 6.13L5.88 10.72C6.27 11.11 6.27 11.75 5.88 12.14L1.29 16.73C0.9 17.12 0.9 17.76 1.29 18.15C1.68 18.54 2.32 18.54 2.71 18.15L6 14.86V20C6 21.1 6.9 22 8 22H16C17.1 22 18 21.1 18 20V16.41L22.29 20.7C22.68 21.09 23.32 21.09 23.71 20.7C24.1 20.31 24.1 19.67 23.71 19.28L19.12 14.69C18.73 14.3 18.73 13.66 19.12 13.27L23.71 8.68C24.1 8.29 24.1 7.65 23.71 7.26C23.32 6.87 22.68 6.87 22.29 7.26L18 11.55V4C18 2.9 17.1 2 16 2Z" />
+                </svg>
+              ) : (
+                <span className="w-1 h-1 rounded-full flex-shrink-0" style={{ backgroundColor: stateColor }} />
+              )}
               <span className="text-[11px] font-mono font-medium tracking-tight truncate">{tab.issue.identifier}</span>
               {hasTerminal && (
                 <span className="relative flex h-1.5 w-1.5 flex-shrink-0">

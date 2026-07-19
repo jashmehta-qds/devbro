@@ -8,6 +8,7 @@ import { ActivityTimeline } from './ActivityTimeline'
 import type { IssueState, GitBranchInfo } from '../types'
 import { useTerminal } from '../hooks/useTerminal'
 import { useLinear } from '../hooks/useLinear'
+import { useWorkDir, repoPath as buildRepoPath } from '../hooks/useWorkDir'
 import { Markdown } from './Markdown'
 
 const TEMPLATES: Record<string, string> = {
@@ -158,6 +159,7 @@ export function TicketView() {
   // Does this ticket currently have a live terminal session in the drawer?
   const hasLiveTerminal = !!selectedIssue && drawerSessions.some((d) => d.ticketId === selectedIssue.id)
   const { openTerminal } = useTerminal()
+  const workDir = useWorkDir()
   const { selectIssue } = useLinear()
   const [branchInput, setBranchInput] = useState('')
   const [branchSaved, setBranchSaved] = useState(false)
@@ -174,6 +176,18 @@ export function TicketView() {
   const [gitInfo, setGitInfo] = useState<GitBranchInfo | null>(null)
   const [secondaryTab, setSecondaryTab] = useState<SecondaryTab>('notes')
 
+  // GitHub integration state
+  const [ghPat, setGhPat] = useState<string | null>(null)
+  const [prInfo, setPrInfo] = useState<any | null>(null)
+  const [prLoading, setPrLoading] = useState(false)
+  const [showCreatePr, setShowCreatePr] = useState(false)
+  const [prTitle, setPrTitle] = useState('')
+  const [prBody, setPrBody] = useState('')
+  const [prBase, setPrBase] = useState('main')
+  const [prBodyLoading, setPrBodyLoading] = useState(false)
+  const [prCreating, setPrCreating] = useState(false)
+  const [createBranchLoading, setCreateBranchLoading] = useState(false)
+
   useEffect(() => {
     if (selectedIssue) {
       loadProgress(selectedIssue.id)
@@ -183,7 +197,13 @@ export function TicketView() {
     setStatusDropdownOpen(false)
     setGitInfo(null)
     setBranchEditing(false)
+    setPrInfo(null)
   }, [selectedIssue?.id])
+
+  // Load GitHub PAT once
+  useEffect(() => {
+    window.api.appConfig.get('github_pat').then((v: string | null) => setGhPat(v || null)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {
@@ -256,6 +276,66 @@ export function TicketView() {
     } catch {}
   }
 
+  const loadPr = async (repoPath: string, branch: string) => {
+    if (!ghPat || !branch) return
+    setPrLoading(true)
+    try {
+      const result = await (window.api as any).github.getPrForBranch(buildRepoPath(workDir, repoPath), branch)
+      setPrInfo(result)
+    } catch {
+      setPrInfo(null)
+    } finally {
+      setPrLoading(false)
+    }
+  }
+
+  const handleCreateBranch = async () => {
+    if (!selectedIssue || projectRepos.length === 0) return
+    const name = (selectedIssue.identifier.toLowerCase() + '-' + selectedIssue.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')).slice(0, 52).replace(/-+$/, '')
+    setCreateBranchLoading(true)
+    try {
+      const result = await (window.api as any).github.createBranch(buildRepoPath(workDir, projectRepos[0]), name)
+      if (result.ok) {
+        setBranchInput(name)
+        await window.api.ticketBranch.save(selectedIssue.id, name)
+        setTicketBranch(selectedIssue.id, name)
+      }
+    } catch {}
+    setCreateBranchLoading(false)
+  }
+
+  const handleOpenCreatePr = async () => {
+    if (!selectedIssue || projectRepos.length === 0) return
+    setPrTitle(selectedIssue.title)
+    setPrBody('')
+    setPrBodyLoading(true)
+    setShowCreatePr(true)
+    try {
+      const result = await (window.api as any).github.draftPrBody(
+        buildRepoPath(workDir, projectRepos[0]), branchInput, prBase,
+        selectedIssue.title, selectedIssue.description || ''
+      )
+      if (result.ok) setPrBody(result.body)
+    } catch {}
+    setPrBodyLoading(false)
+  }
+
+  const handleCreatePr = async () => {
+    if (!selectedIssue || projectRepos.length === 0) return
+    setPrCreating(true)
+    try {
+      const result = await (window.api as any).github.createPr(buildRepoPath(workDir, projectRepos[0]), {
+        title: prTitle, body: prBody, head: branchInput, base: prBase
+      })
+      if (result.url) {
+        window.open(result.url, '_blank')
+        setShowCreatePr(false)
+        await loadPr(projectRepos[0], branchInput)
+      }
+    } catch {}
+    setPrCreating(false)
+  }
+
 
   const [projectRepos, setProjectRepos] = useState<string[]>([])
 
@@ -268,7 +348,7 @@ export function TicketView() {
           setProjectRepos(repos)
           if (repos.length > 0 && selectedIssue && !ticketBranches[selectedIssue.id]) {
             try {
-              const info = await window.api.git.getBranchInfo(`~/Work/${repos[0]}`)
+              const info = await window.api.git.getBranchInfo(buildRepoPath(workDir, repos[0]))
               setGitInfo(info)
               if (info.branch && !ticketBranches[selectedIssue.id]) {
                 setBranchInput(info.branch)
@@ -278,7 +358,7 @@ export function TicketView() {
             } catch {}
           } else if (repos.length > 0) {
             try {
-              const info = await window.api.git.getBranchInfo(`~/Work/${repos[0]}`)
+              const info = await window.api.git.getBranchInfo(buildRepoPath(workDir, repos[0]))
               setGitInfo(info)
             } catch {}
           }
@@ -294,13 +374,22 @@ export function TicketView() {
     if (!hasLiveTerminal || projectRepos.length === 0) return
     const refreshGit = async () => {
       try {
-        const info = await window.api.git.getBranchInfo(`~/Work/${projectRepos[0]}`)
+        const info = await window.api.git.getBranchInfo(buildRepoPath(workDir, projectRepos[0]))
         setGitInfo(info)
       } catch {}
     }
     const interval = setInterval(refreshGit, 30_000)
     return () => clearInterval(interval)
   }, [hasLiveTerminal, projectRepos])
+
+  // Load PR info when branch or repo changes
+  useEffect(() => {
+    if (branchInput && projectRepos.length > 0 && ghPat) {
+      loadPr(projectRepos[0], branchInput)
+    } else {
+      setPrInfo(null)
+    }
+  }, [branchInput, projectRepos[0], ghPat])
 
   const handleOpenTerminal = async (repoName?: string) => {
     await openTerminal(80, 30, repoName)
@@ -474,6 +563,49 @@ export function TicketView() {
                   {gitInfo.isDirty && <span className="text-[10px] font-mono text-gray-400" title="Uncommitted changes">● dirty</span>}
                 </>
               )}
+              {/* Create Branch button — only when no branch and PAT configured */}
+              {ghPat && !branchInput && !branchEditing && projectRepos.length > 0 && (
+                <button
+                  onClick={handleCreateBranch}
+                  disabled={createBranchLoading}
+                  className="inline-flex items-center h-6 px-2 rounded-md bg-gray-900 border border-gray-800 text-[10px] text-gray-400 hover:border-violet-600/40 hover:text-violet-400 transition-colors disabled:opacity-50"
+                >
+                  {createBranchLoading ? '…' : '+ branch'}
+                </button>
+              )}
+              {/* PR chip */}
+              {ghPat && prLoading && (
+                <span className="text-[10px] text-gray-600 font-mono">PR…</span>
+              )}
+              {ghPat && !prLoading && prInfo && (
+                <button
+                  onClick={() => window.open(prInfo.url, '_blank')}
+                  title={prInfo.title}
+                  className={`inline-flex items-center h-6 px-2 rounded-md border text-[10px] font-mono transition-colors ${
+                    prInfo.mergedAt
+                      ? 'bg-violet-500/10 border-violet-500/20 text-violet-300 hover:border-violet-400/40'
+                      : prInfo.checks?.status === 'passing'
+                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300 hover:border-emerald-400/40'
+                      : prInfo.checks?.status === 'failing'
+                      ? 'bg-red-500/10 border-red-500/20 text-red-300 hover:border-red-400/40'
+                      : prInfo.checks?.status === 'pending'
+                      ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-300 hover:border-yellow-400/40'
+                      : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600'
+                  }`}
+                >
+                  PR #{prInfo.number}
+                  {prInfo.mergedAt ? ' ✓ merged' : prInfo.checks?.status === 'passing' ? ' ✓' : prInfo.checks?.status === 'failing' ? ' ✗' : prInfo.checks?.status === 'pending' ? ' ⋯' : ''}
+                </button>
+              )}
+              {/* Create PR button — when branch exists, PAT configured, no PR found, has commits ahead */}
+              {ghPat && branchInput && !branchEditing && !prInfo && !prLoading && projectRepos.length > 0 && gitInfo && gitInfo.aheadBy > 0 && (
+                <button
+                  onClick={handleOpenCreatePr}
+                  className="inline-flex items-center h-6 px-2 rounded-md bg-violet-500/10 border border-violet-500/20 text-[10px] text-violet-300 hover:border-violet-400/40 transition-colors"
+                >
+                  Create PR
+                </button>
+              )}
             </div>
           </div>
 
@@ -486,7 +618,7 @@ export function TicketView() {
                       ? 'bg-surface border-border text-gray-400 hover:border-gray-700 hover:text-gray-200'
                       : 'bg-accent hover:bg-violet-500 border-transparent text-white shadow-soft'
                   }`}
-                  title={`Open terminal in ~/Work/${repo}`}
+                  title={`Open terminal in ${buildRepoPath(workDir, repo)}`}
                 >
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -538,6 +670,8 @@ export function TicketView() {
             ticketId={selectedIssue.id}
             title={selectedIssue.title}
             description={selectedIssue.description}
+            issue={selectedIssue}
+            repoPaths={projectRepos.map((r) => buildRepoPath(workDir, r))}
           />
 
           {selectedIssue.description ? (
@@ -579,7 +713,7 @@ export function TicketView() {
           <div className="flex-1 min-h-0">
             {secondaryTab === 'notes' && <InlineNotes ticketId={selectedIssue.id} />}
             {secondaryTab === 'checklist' && <ChecklistWidget ticketId={selectedIssue.id} />}
-            {secondaryTab === 'skills' && <SkillsTab ticketId={selectedIssue.id} />}
+            {secondaryTab === 'skills' && <SkillsTab ticketId={selectedIssue.id} repos={projectRepos} />}
             {secondaryTab === 'diff' && (
               <DiffViewer ticketId={selectedIssue.id} projectRepos={projectRepos} />
             )}
@@ -592,6 +726,64 @@ export function TicketView() {
           </div>
         </div>
       </div>
+
+      {/* Create PR modal */}
+      {showCreatePr && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) setShowCreatePr(false) }}>
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl shadow-pop w-[560px] max-h-[80vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 flex-shrink-0">
+              <h3 className="text-sm font-semibold text-gray-100">Create Pull Request</h3>
+              <button onClick={() => setShowCreatePr(false)} className="text-gray-500 hover:text-gray-300 transition-colors">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              <div>
+                <label className="block text-xs text-gray-400 font-medium mb-1.5">Title</label>
+                <input
+                  type="text"
+                  value={prTitle}
+                  onChange={e => setPrTitle(e.target.value)}
+                  className="w-full bg-gray-950 border border-gray-800 rounded-lg h-9 px-3 text-sm text-gray-100 placeholder:text-gray-600 focus:border-gray-600 focus:ring-0 outline-none transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 font-medium mb-1.5">
+                  Body
+                  {prBodyLoading && <span className="ml-2 text-gray-600">drafting…</span>}
+                </label>
+                <textarea
+                  value={prBody}
+                  onChange={e => setPrBody(e.target.value)}
+                  rows={10}
+                  placeholder={prBodyLoading ? 'Claude is drafting…' : 'PR description (Markdown)'}
+                  className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600 focus:border-gray-600 focus:ring-0 outline-none transition-colors resize-none font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 font-medium mb-1.5">Base branch</label>
+                <input
+                  type="text"
+                  value={prBase}
+                  onChange={e => setPrBase(e.target.value)}
+                  className="w-full bg-gray-950 border border-gray-800 rounded-lg h-9 px-3 text-sm text-gray-100 placeholder:text-gray-600 focus:border-gray-600 focus:ring-0 outline-none transition-colors font-mono"
+                />
+              </div>
+              <div className="text-xs text-gray-600 font-mono">{branchInput} → {prBase}</div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-800 flex-shrink-0">
+              <button onClick={() => setShowCreatePr(false)} className="h-9 px-4 rounded-lg text-sm text-gray-400 hover:text-gray-200 transition-colors">Cancel</button>
+              <button
+                onClick={handleCreatePr}
+                disabled={prCreating || !prTitle.trim()}
+                className="h-9 px-5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm font-medium transition-colors shadow-soft"
+              >
+                {prCreating ? 'Creating…' : 'Create PR'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

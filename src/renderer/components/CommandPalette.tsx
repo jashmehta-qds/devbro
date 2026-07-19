@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useAppStore } from '../store'
 import { useTerminal } from '../hooks/useTerminal'
-import type { LinearIssue } from '../types'
+import type { LinearIssue, SkillManifest, TicketContext } from '../types'
+import { applySkillAndRoute } from '../lib/applySkill'
 
 const STATE_COLORS: Record<string, string> = {
   backlog: '#6B7280',
@@ -37,6 +38,7 @@ interface CommandContext {
   openTerminalForCurrent: () => void
   exportCsv: () => void
   refreshAnalytics: () => void
+  openSkills: () => void
   closeCommandPalette: () => void
 }
 
@@ -49,6 +51,7 @@ const COMMANDS: AppCommand[] = [
   { id: 'dashboard', label: 'Go to Analytics', desc: 'Open analytics dashboard', run: (ctx) => { ctx.openAnalytics(); ctx.closeCommandPalette() } },
   { id: 'settings', label: 'Go to Settings', desc: 'Open project configuration', run: (ctx) => { ctx.openSettings(); ctx.closeCommandPalette() } },
   { id: 'refresh', label: 'Refresh issues', desc: 'Reload issues from tracker', run: (ctx) => { ctx.refresh(); ctx.closeCommandPalette() } },
+  { id: 'skills', label: 'Go to Skills', desc: 'Browse & install skills', run: (ctx) => { ctx.openSkills(); ctx.closeCommandPalette() } },
 ]
 
 interface ParsedQuery {
@@ -128,11 +131,14 @@ export function CommandPalette() {
     setStandupOpen,
     openDashboardTab,
     openSettingsTab,
+    openSkillsTab,
     setIsSyncing,
     toggleDrawer,
     addNotification,
+    ticketBranches,
   } = useAppStore()
-  const { openTerminal } = useTerminal()
+  const { openTerminal, runCommand } = useTerminal()
+  const [installedSkills, setInstalledSkills] = useState<SkillManifest[]>([])
   const [query, setQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -140,10 +146,18 @@ export function CommandPalette() {
   const allIssues: LinearIssue[] = useMemo(() => Object.values(issues).flat(), [issues])
 
   const mode = useMemo(() => {
+    if (query === '>skill' || query.startsWith('>skill ')) return 'skill'
     if (query.startsWith('>')) return 'command'
     if (query.startsWith('#')) return 'identifier'
     return 'issue'
   }, [query])
+
+  // Load installed skills once when palette opens (or when entering skill mode)
+  useEffect(() => {
+    if (mode !== 'skill') return
+    if (installedSkills.length > 0) return
+    void window.api.skillPkg.list().then((list) => setInstalledSkills(list)).catch(() => {})
+  }, [mode, installedSkills.length])
 
   const commandCtx: CommandContext = useMemo(() => ({
     openStandup: () => setStandupOpen(true),
@@ -172,8 +186,9 @@ export function CommandPalette() {
       }
     },
     refreshAnalytics: () => { openDashboardTab() },
+    openSkills: () => openSkillsTab(),
     closeCommandPalette: () => setCommandPaletteOpen(false),
-  }), [setStandupOpen, openDashboardTab, openSettingsTab, setIsSyncing, toggleDrawer, openTerminal, addNotification, setCommandPaletteOpen])
+  }), [setStandupOpen, openDashboardTab, openSettingsTab, openSkillsTab, setIsSyncing, toggleDrawer, openTerminal, addNotification, setCommandPaletteOpen])
 
   const filteredCommands = useMemo(() => {
     if (mode !== 'command') return []
@@ -181,6 +196,17 @@ export function CommandPalette() {
     if (!searchText) return COMMANDS.slice(0, 20)
     return COMMANDS.filter((cmd) => cmd.label.toLowerCase().includes(searchText)).slice(0, 20)
   }, [query, mode])
+
+  const filteredSkills = useMemo(() => {
+    if (mode !== 'skill') return []
+    const q = query.slice('>skill'.length).trim().toLowerCase()
+    if (!q) return installedSkills.slice(0, 20)
+    return installedSkills.filter((s) =>
+      s.name.toLowerCase().includes(q) ||
+      s.description.toLowerCase().includes(q) ||
+      s.tags.some((t) => t.toLowerCase().includes(q))
+    ).slice(0, 20)
+  }, [query, mode, installedSkills])
 
   const filteredByIdentifier = useMemo(() => {
     if (mode !== 'identifier') return []
@@ -238,10 +264,11 @@ export function CommandPalette() {
   }, [mode, allIssues, parsed, query, tabs, recentIssueIds])
 
   const filtered = useMemo(() => {
+    if (mode === 'skill') return filteredSkills as any[]
     if (mode === 'command') return filteredCommands as any[]
     if (mode === 'identifier') return filteredByIdentifier as any[]
     return filteredIssues as any[]
-  }, [mode, filteredCommands, filteredByIdentifier, filteredIssues])
+  }, [mode, filteredCommands, filteredByIdentifier, filteredIssues, filteredSkills])
 
   useEffect(() => {
     setSelectedIdx(0)
@@ -266,6 +293,29 @@ export function CommandPalette() {
     [commandCtx]
   )
 
+  const handleSelectSkill = useCallback(
+    async (skill: SkillManifest) => {
+      const issue = useAppStore.getState().selectedIssue
+      if (!issue) {
+        addNotification('Open a ticket first')
+        return
+      }
+      const ctx: TicketContext = {
+        ticketId: issue.id,
+        issue: {
+          identifier: issue.identifier,
+          title: issue.title,
+          description: issue.description ?? undefined,
+          branch: ticketBranches[issue.id],
+        },
+        repoPath: undefined,
+      }
+      setCommandPaletteOpen(false)
+      await applySkillAndRoute(skill._slug, ctx, runCommand)
+    },
+    [addNotification, ticketBranches, runCommand, setCommandPaletteOpen]
+  )
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -279,14 +329,16 @@ export function CommandPalette() {
       } else if (e.key === 'Enter') {
         const item = filtered[selectedIdx]
         if (!item) return
-        if (mode === 'command') {
+        if (mode === 'skill') {
+          void handleSelectSkill(item as SkillManifest)
+        } else if (mode === 'command') {
           handleSelectCommand(item as AppCommand)
         } else {
           handleSelectIssue(item as LinearIssue)
         }
       }
     },
-    [filtered, selectedIdx, mode, handleSelectCommand, handleSelectIssue, setCommandPaletteOpen]
+    [filtered, selectedIdx, mode, handleSelectCommand, handleSelectIssue, handleSelectSkill, setCommandPaletteOpen]
   )
 
   const isOpenInTab = (issue: LinearIssue) => tabs.some((t) => t.id === issue.id)
@@ -302,6 +354,9 @@ export function CommandPalette() {
   const showProjectHeaders = projectNames.size > 1
 
   const renderItems = useMemo(() => {
+    if (mode === 'skill') {
+      return filteredSkills.map((skill, idx) => ({ kind: 'skill' as const, skill, idx }))
+    }
     if (mode === 'command') {
       return filteredCommands.map((cmd, idx) => ({ kind: 'command' as const, cmd, idx }))
     }
@@ -328,29 +383,34 @@ export function CommandPalette() {
       result.push({ kind: 'issue', issue, idx })
     })
     return result
-  }, [mode, filteredCommands, filteredByIdentifier, filteredIssues, showProjectHeaders])
+  }, [mode, filteredCommands, filteredByIdentifier, filteredIssues, filteredSkills, showProjectHeaders])
 
   const placeholder =
+    mode === 'skill' ? 'Apply an installed skill…' :
     mode === 'command' ? 'Run a command…' :
     mode === 'identifier' ? 'Jump to identifier…' :
     'Search issues, type > for commands, # for ID lookup'
 
   const modeDot =
+    mode === 'skill' ? 'bg-violet-500' :
     mode === 'command' ? 'bg-violet-500' :
     mode === 'identifier' ? 'bg-amber-500' :
     'bg-blue-500'
 
   const modeLabel =
+    mode === 'skill' ? 'Skills' :
     mode === 'command' ? 'Commands' :
     mode === 'identifier' ? 'Identifier' :
     'Issues'
 
   const emptyIcon =
+    mode === 'skill' ? <IconCommand /> :
     mode === 'command' ? <IconCommand /> :
     mode === 'identifier' ? <IconHash /> :
     <IconSearch />
 
   const emptyHint =
+    mode === 'skill' ? 'No skills installed or matched' :
     mode === 'command' ? 'No commands matched' :
     mode === 'identifier' ? 'No issue found with that identifier' :
     'Try removing filters or different keywords'
@@ -392,6 +452,11 @@ export function CommandPalette() {
             </div>
           ) : (
             <>
+              {mode === 'skill' && (
+                <div className="text-[10px] tracking-[0.14em] text-gray-500 font-medium px-5 pt-3 pb-1.5 uppercase">
+                  Skills
+                </div>
+              )}
               {mode === 'command' && (
                 <div className="text-[10px] tracking-[0.14em] text-gray-500 font-medium px-5 pt-3 pb-1.5 uppercase">
                   Commands
@@ -410,6 +475,37 @@ export function CommandPalette() {
                       className="text-[10px] tracking-[0.14em] text-gray-500 font-medium px-5 pt-3 pb-1.5 uppercase"
                     >
                       {item.project}
+                    </div>
+                  )
+                }
+
+                if (item.kind === 'skill') {
+                  const skill = item.skill
+                  const idx = item.idx
+                  const selected = idx === selectedIdx
+                  const typeChip = skill.type === 'prompt'
+                    ? 'bg-violet-500/10 text-violet-300 border-violet-500/20'
+                    : 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                  return (
+                    <div
+                      key={skill._slug}
+                      className={`relative flex items-center gap-3 px-5 py-2.5 cursor-pointer transition-colors duration-150 ease-out-quart ${selected ? 'bg-violet-500/10 text-gray-50' : 'text-gray-300 hover:bg-gray-800/40'}`}
+                      onClick={() => handleSelectSkill(skill)}
+                      onMouseEnter={() => setSelectedIdx(idx)}
+                    >
+                      {selected && (
+                        <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-violet-500" />
+                      )}
+                      <span className={selected ? 'text-violet-400' : 'text-gray-500'}>
+                        <IconCommand />
+                      </span>
+                      <span className="flex-1 flex flex-col gap-0.5 min-w-0">
+                        <span className="text-sm font-medium leading-none truncate">{skill.name}</span>
+                        <span className="text-xs text-gray-500 leading-none mt-1 truncate">{skill.description}</span>
+                      </span>
+                      <span className={`inline-flex items-center border h-4 px-1.5 rounded text-[9px] font-mono ${typeChip}`}>
+                        {skill.type}
+                      </span>
                     </div>
                   )
                 }

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { useWorkDir, repoPath as buildRepoPath } from '../hooks/useWorkDir'
 import { EmptyState, ErrorState, Spinner } from './ui'
 
 const DIFF_TOO_LARGE_BYTES = 2 * 1024 * 1024 // 2MB — render file list only beyond this
@@ -124,15 +125,11 @@ export function DiffViewer({ ticketId, projectRepos }: {
   projectRepos: string[]
 }) {
   const [mode, setMode] = useState<'uncommitted' | 'session'>('uncommitted')
-  const [diff, setDiff] = useState<string>('')
+  const [perRepo, setPerRepo] = useState<Array<{ repo: string; diff: string; error?: string }>>([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [sessionSha, setSessionSha] = useState<string | null>(null)
-  const tooLarge = diff.length > DIFF_TOO_LARGE_BYTES
+  const workDir = useWorkDir()
 
-  const repoPath = projectRepos[0] ? `~/Work/${projectRepos[0]}` : null
-
-  // Fetch the latest session's gitStartSha for "Since session start" mode
   useEffect(() => {
     window.api.activity.getForTicket(ticketId).then((events: any[]) => {
       const sessions = events.filter(e => e.type === 'session' && e.data?.gitStartSha)
@@ -142,25 +139,24 @@ export function DiffViewer({ ticketId, projectRepos }: {
   }, [ticketId])
 
   const fetchDiff = useCallback(async () => {
-    if (!repoPath) { setDiff(''); return }
+    if (projectRepos.length === 0) { setPerRepo([]); return }
     setLoading(true)
-    setError(null)
-    try {
-      const fromSha = mode === 'session' ? (sessionSha ?? undefined) : undefined
-      const raw = await window.api.git.getDiff(repoPath, fromSha)
-      setDiff(raw)
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load diff')
-    } finally {
-      setLoading(false)
-    }
-  }, [repoPath, mode, sessionSha])
+    const fromSha = mode === 'session' ? (sessionSha ?? undefined) : undefined
+    const results = await Promise.all(projectRepos.map(async (repo) => {
+      try {
+        const raw = await window.api.git.getDiff(buildRepoPath(workDir, repo), fromSha)
+        return { repo, diff: raw }
+      } catch (e: any) {
+        return { repo, diff: '', error: e?.message || 'Failed to load diff' }
+      }
+    }))
+    setPerRepo(results)
+    setLoading(false)
+  }, [projectRepos.join(','), mode, sessionSha, workDir])
 
   useEffect(() => { fetchDiff() }, [fetchDiff])
 
-  const files = parseDiff(diff)
-
-  if (!repoPath) {
+  if (projectRepos.length === 0) {
     return <EmptyState title="Not a repo" hint="No repo is linked to this ticket's project. Link one in the project view." />
   }
 
@@ -195,28 +191,41 @@ export function DiffViewer({ ticketId, projectRepos }: {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0 space-y-6">
         {loading && (
           <div className="flex items-center justify-center py-10"><Spinner size={18} /></div>
         )}
-        {!loading && error && (
-          <ErrorState message={error} onRetry={fetchDiff} />
-        )}
-        {!loading && !error && files.length === 0 && (
+        {!loading && perRepo.every((r) => !r.error && parseDiff(r.diff).length === 0) && (
           <EmptyState
             title="No changes"
-            hint={mode === 'session' ? 'Nothing changed since the last session started.' : 'Working tree is clean.'}
+            hint={mode === 'session' ? 'Nothing changed since the last session started.' : 'Working trees are clean.'}
             icon={<svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" /></svg>}
           />
         )}
-        {!loading && !error && files.length > 0 && tooLarge && (
-          <div className="mb-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300">
-            Diff is large ({(diff.length / (1024 * 1024)).toFixed(1)}MB) — showing file list only. Open in your editor for full hunks.
-          </div>
-        )}
-        {!loading && !error && files.map((file, i) => (
-          <FileAccordion key={i} file={file} listOnly={tooLarge} />
-        ))}
+        {!loading && perRepo.map(({ repo, diff, error }) => {
+          const files = parseDiff(diff)
+          const tooLarge = diff.length > DIFF_TOO_LARGE_BYTES
+          if (!error && files.length === 0) return null
+          return (
+            <div key={repo}>
+              <div className="flex items-baseline gap-2 mb-2 sticky top-0 bg-gray-950/95 backdrop-blur py-1 z-10">
+                <span className="text-[11px] font-mono uppercase tracking-[0.14em] text-gray-400">{repo}</span>
+                {!error && (
+                  <span className="text-[10px] font-mono text-gray-600">{files.length} file{files.length === 1 ? '' : 's'}</span>
+                )}
+              </div>
+              {error && <ErrorState message={error} onRetry={fetchDiff} />}
+              {!error && tooLarge && (
+                <div className="mb-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300">
+                  Diff is large ({(diff.length / (1024 * 1024)).toFixed(1)}MB) — file list only.
+                </div>
+              )}
+              {!error && files.map((file, i) => (
+                <FileAccordion key={i} file={file} listOnly={tooLarge} />
+              ))}
+            </div>
+          )
+        })}
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, Notification } from 'electron'
 import { randomUUID as uuidv4 } from 'crypto'
 import { getDb } from './db'
 import { getActiveConnector, createConnector, maskConfig, invalidateConnectorCache } from './connectors/index'
@@ -11,7 +11,9 @@ import {
   attachTerminal,
   detachTerminal,
   buildContextContent,
-  getSessionCwd
+  getSessionCwd,
+  reinjectContext,
+  setPendingContextOverride
 } from './pty'
 import fs from 'fs'
 import path from 'path'
@@ -19,10 +21,18 @@ import os from 'os'
 import { writeGlobalConfigFile } from './configLog'
 import { runClaudeStreaming } from './claudeCli'
 import * as analytics from './analytics'
+import * as github from './github'
+import { getLinearClient } from './linear'
+import * as skills from './skills'
 
 let handlersRegistered = false
 let currentWin: BrowserWindow | null = null
 let pollIntervalId: ReturnType<typeof setInterval> | null = null
+
+// Notification state management
+let cachedViewerId: string | null = null
+let lastKnownIssues: Map<string, any> = new Map()
+let deadlineNotified: Set<string> = new Set()
 
 export function registerIpcHandlers(win: BrowserWindow): void {
   currentWin = win
@@ -433,6 +443,8 @@ Rules for newPercent:
     db.prepare('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)').run(key, value)
   })
 
+  ipcMain.handle('workDir:get', async () => getWorkDir())
+
   // Repos handler — scans work directory for folders
   // ============================================================
   ipcMain.handle('repos:list', async () => {
@@ -514,6 +526,26 @@ Rules for newPercent:
     return row ? row.content : null
   })
 
+  ipcMain.handle('checklist:generate', async (_event, ticketId: string, title: string, description: string) => {
+    const prompt = `You are helping a developer break down an engineering ticket into a short actionable checklist.\n\nTitle: ${title}\n\nDescription: ${description || 'No description provided'}\n\nOutput ONLY a plain list of 3-8 checklist items, one per line, each starting with "- ". No preamble, no headings, no numbering. Keep each item short (max ~80 chars) and imperative (e.g. "- Add unit tests for X").`
+    const callId = uuidv4()
+    try {
+      const result = await runClaudeStreaming({ prompt, callId, win: currentWin })
+      if (!result.ok) return null
+      const items = result.output
+        .split('\n')
+        .map((l: string) => l.trim())
+        .filter((l: string) => l.startsWith('- '))
+        .map((l: string) => l.slice(2).trim())
+        .filter((l: string) => l.length > 0 && l.length < 200)
+      if (items.length === 0) return null
+      return items
+    } catch (err) {
+      console.error('[checklist:generate] failed:', err)
+      return null
+    }
+  })
+
   ipcMain.handle('eli5:generate', async (_event, ticketId: string, title: string, description: string) => {
     const prompt = `Explain this engineering ticket in simple terms (ELI5 - Explain Like I'm 5):\n\nTitle: ${title}\n\nDescription: ${description || 'No description provided'}\n\nKeep it under 150 words, friendly and clear.`
 
@@ -535,6 +567,80 @@ Rules for newPercent:
     ).run(ticketId, content, Date.now())
 
     return content
+  })
+
+  const collectDiffs = (repoPaths: string[]): string => {
+    const { execSync } = require('child_process')
+    const os = require('os')
+    const parts: string[] = []
+    for (const rp of repoPaths) {
+      const expanded = rp.replace(/^~/, os.homedir())
+      try {
+        const out = execSync('git diff HEAD --', { cwd: expanded, timeout: 10000, maxBuffer: 2 * 1024 * 1024 }).toString()
+        if (out.trim()) parts.push(`# repo: ${rp.split('/').pop()}\n${out}`)
+      } catch { /* skip repo on error */ }
+    }
+    return parts.join('\n\n')
+  }
+
+  ipcMain.handle('eli5:explainDiff', async (_event, ticketId: string, issue: any, repoPaths: string | string[]) => {
+    const paths = Array.isArray(repoPaths) ? repoPaths : [repoPaths]
+    const diff = collectDiffs(paths) || '(Could not fetch diff)'
+    const prompt = `Explain the following code changes in plain English (what was modified and why). Keep it concise (under 200 words).\n\nDiff:\n\`\`\`\n${diff}\n\`\`\``
+
+    const callId = uuidv4()
+    try {
+      const result = await runClaudeStreaming({ prompt, callId, win: currentWin })
+      if (!result.ok) return null
+      return result.output
+    } catch (err) {
+      console.error('[eli5:explainDiff] Claude CLI failed:', err)
+      return null
+    }
+  })
+
+  ipcMain.handle('eli5:risks', async (_event, ticketId: string, issue: any, repoPaths?: string | string[]) => {
+    const description = issue?.description || ''
+    const paths = repoPaths ? (Array.isArray(repoPaths) ? repoPaths : [repoPaths]) : []
+    const diff = paths.length > 0 ? collectDiffs(paths) : ''
+
+    const diffSection = diff ? `\n\nCode changes:\n\`\`\`\n${diff}\n\`\`\`` : ''
+    const prompt = `You are a senior engineer reviewing this work. Identify potential risks, edge cases, or concerns that should be considered. Keep it concise (under 200 words).\n\nDescription:\n${description || '(no description)'}${diffSection}`
+
+    const callId = uuidv4()
+    try {
+      const result = await runClaudeStreaming({ prompt, callId, win: currentWin })
+      if (!result.ok) return null
+      return result.output
+    } catch (err) {
+      console.error('[eli5:risks] Claude CLI failed:', err)
+      return null
+    }
+  })
+
+  ipcMain.handle('eli5:draftPr', async (_event, ticketId: string, issue: any, repoPaths?: string | string[]) => {
+    const description = issue?.description || ''
+    const title = issue?.title || ''
+    const paths = repoPaths ? (Array.isArray(repoPaths) ? repoPaths : [repoPaths]) : []
+    const diff = paths.length > 0 ? collectDiffs(paths) : ''
+
+    const diffSection = diff ? `\n\nCode changes:\n\`\`\`\n${diff.slice(0, 6000)}\n\`\`\`` : ''
+    const prompt = `Draft a professional GitHub PR description for this work. Include:
+- A Summary section (2-3 sentences explaining what was done)
+- A Test plan checklist (3-5 items describing how to test)
+
+Ticket: ${title}
+Description: ${description}${diffSection}`
+
+    const callId = uuidv4()
+    try {
+      const result = await runClaudeStreaming({ prompt, callId, win: currentWin })
+      if (!result.ok) return null
+      return result.output
+    } catch (err) {
+      console.error('[eli5:draftPr] Claude CLI failed:', err)
+      return null
+    }
   })
 
   // ============================================================
@@ -878,31 +984,15 @@ ${activityContext}`
     const cwd = getSessionCwd(sessionId)
     if (!cwd) return { ok: false, error: 'Session not found' }
     const content = await buildContextContent(ticketId, issueData, cwd)
-    fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), content, 'utf-8')
-    return { ok: true, path: path.join(cwd, 'CLAUDE.md') }
+    const injected = reinjectContext(sessionId, content)
+    return { ok: injected, error: injected ? undefined : 'reinject failed' }
   })
 
-  ipcMain.handle('context:writeForSession', async (_event, ticketId: string, issueData: any, editedText: string) => {
-    const workDir = getWorkDir()
-    const projectId = issueData?.project?.id as string | undefined
-    let cwd: string | undefined
-    try {
-      const db = getDb()
-      if (projectId) {
-        const row = db.prepare('SELECT repo_name FROM project_repos WHERE linear_project_id = ? ORDER BY created_at ASC LIMIT 1').get(projectId) as any
-        if (row?.repo_name) {
-          const p = path.join(workDir, row.repo_name)
-          if (fs.existsSync(p)) cwd = p
-        }
-      }
-    } catch {}
-    if (!cwd) {
-      const home = process.env.HOME || os.homedir()
-      cwd = home
-    }
-    const claudePath = path.join(cwd, 'CLAUDE.md')
-    fs.writeFileSync(claudePath, editedText, 'utf-8')
-    return { ok: true, path: claudePath }
+  // ponytail: repo stays untouched. Edited context is stashed and consumed by
+  // the next createTerminal() call for this ticket via setPendingContextOverride.
+  ipcMain.handle('context:writeForSession', async (_event, ticketId: string, _issueData: any, editedText: string) => {
+    setPendingContextOverride(ticketId, editedText)
+    return { ok: true }
   })
 
   // ============================================================
@@ -925,6 +1015,12 @@ ${activityContext}`
     db.prepare('DELETE FROM project_skills WHERE id = ?').run(skillId)
   })
 
+  ipcMain.handle('projectSkills:update', async (_event, skillId: string, name: string, command: string) => {
+    const db = getDb()
+    db.prepare('UPDATE project_skills SET name = ?, command = ? WHERE id = ?').run(name, command, skillId)
+    return db.prepare('SELECT * FROM project_skills WHERE id = ?').get(skillId)
+  })
+
   // ============================================================
   // Global Skills (available in every ticket)
   // ============================================================
@@ -945,9 +1041,209 @@ ${activityContext}`
     db.prepare('DELETE FROM global_skills WHERE id = ?').run(skillId)
   })
 
+  ipcMain.handle('globalSkills:update', async (_event, skillId: string, name: string, command: string) => {
+    const db = getDb()
+    db.prepare('UPDATE global_skills SET name = ?, command = ? WHERE id = ?').run(name, command, skillId)
+    return db.prepare('SELECT * FROM global_skills WHERE id = ?').get(skillId)
+  })
+
+  // ============================================================
+  // Skill links (global/project/ticket → installed-skill slugs)
+  // ============================================================
+  const SLUG_LINK_RE = /^[A-Za-z0-9._-]+$/
+
+  ipcMain.handle('skillLinks:listForTicket', async (_e, ticketId: string, projectId: string | null) => {
+    const db = getDb()
+    const global = (db.prepare('SELECT slug FROM global_skill_links').all() as any[]).map(r => r.slug)
+    const project = projectId
+      ? (db.prepare('SELECT slug FROM project_skill_links WHERE project_id = ?').all(projectId) as any[]).map(r => r.slug)
+      : []
+    const ticket = ticketId
+      ? (db.prepare('SELECT slug FROM ticket_skill_links WHERE ticket_id = ?').all(ticketId) as any[]).map(r => r.slug)
+      : []
+    return { global, project, ticket }
+  })
+
+  ipcMain.handle('skillLinks:setSingle', async (
+    _e,
+    slug: string,
+    scope: 'global' | 'project' | 'ticket',
+    on: boolean,
+    ctx: { projectId?: string; ticketId?: string }
+  ) => {
+    if (typeof slug !== 'string' || !SLUG_LINK_RE.test(slug)) return { ok: false, error: 'invalid slug' }
+    const db = getDb()
+    const now = Date.now()
+    if (scope === 'global') {
+      if (on) db.prepare('INSERT OR IGNORE INTO global_skill_links (slug, linked_at) VALUES (?, ?)').run(slug, now)
+      else db.prepare('DELETE FROM global_skill_links WHERE slug = ?').run(slug)
+    } else if (scope === 'project') {
+      if (!ctx?.projectId) return { ok: false, error: 'projectId required' }
+      if (on) db.prepare('INSERT OR IGNORE INTO project_skill_links (project_id, slug, linked_at) VALUES (?, ?, ?)').run(ctx.projectId, slug, now)
+      else db.prepare('DELETE FROM project_skill_links WHERE project_id = ? AND slug = ?').run(ctx.projectId, slug)
+    } else if (scope === 'ticket') {
+      if (!ctx?.ticketId) return { ok: false, error: 'ticketId required' }
+      if (on) db.prepare('INSERT OR IGNORE INTO ticket_skill_links (ticket_id, slug, linked_at) VALUES (?, ?, ?)').run(ctx.ticketId, slug, now)
+      else db.prepare('DELETE FROM ticket_skill_links WHERE ticket_id = ? AND slug = ?').run(ctx.ticketId, slug)
+    } else {
+      return { ok: false, error: 'invalid scope' }
+    }
+    return { ok: true }
+  })
+
+  ipcMain.handle('skillLinks:toggleBatch', async (
+    _e,
+    slugs: string[],
+    scope: 'global' | 'project' | 'ticket',
+    ctx: { projectId?: string; ticketId?: string }
+  ) => {
+    if (!Array.isArray(slugs) || slugs.length === 0) return { attached: [], detached: [] }
+    for (const s of slugs) {
+      if (typeof s !== 'string' || !SLUG_LINK_RE.test(s)) return { attached: [], detached: [], error: 'invalid slug' }
+    }
+    if (scope === 'project' && !ctx?.projectId) return { attached: [], detached: [], error: 'projectId required' }
+    if (scope === 'ticket' && !ctx?.ticketId) return { attached: [], detached: [], error: 'ticketId required' }
+
+    const db = getDb()
+    const now = Date.now()
+    const placeholders = slugs.map(() => '?').join(',')
+
+    let existing: string[] = []
+    if (scope === 'global') {
+      existing = (db.prepare(`SELECT slug FROM global_skill_links WHERE slug IN (${placeholders})`).all(...slugs) as any[]).map(r => r.slug)
+    } else if (scope === 'project') {
+      existing = (db.prepare(`SELECT slug FROM project_skill_links WHERE project_id = ? AND slug IN (${placeholders})`).all(ctx.projectId, ...slugs) as any[]).map(r => r.slug)
+    } else {
+      existing = (db.prepare(`SELECT slug FROM ticket_skill_links WHERE ticket_id = ? AND slug IN (${placeholders})`).all(ctx.ticketId, ...slugs) as any[]).map(r => r.slug)
+    }
+
+    const allPresent = existing.length === slugs.length
+    let attached: string[] = []
+    let detached: string[] = []
+
+    const runTx = db.transaction(() => {
+      if (allPresent) {
+        if (scope === 'global') {
+          db.prepare(`DELETE FROM global_skill_links WHERE slug IN (${placeholders})`).run(...slugs)
+        } else if (scope === 'project') {
+          db.prepare(`DELETE FROM project_skill_links WHERE project_id = ? AND slug IN (${placeholders})`).run(ctx.projectId, ...slugs)
+        } else {
+          db.prepare(`DELETE FROM ticket_skill_links WHERE ticket_id = ? AND slug IN (${placeholders})`).run(ctx.ticketId, ...slugs)
+        }
+        detached = [...slugs]
+      } else {
+        const existingSet = new Set(existing)
+        const missing = slugs.filter(s => !existingSet.has(s))
+        if (scope === 'global') {
+          const stmt = db.prepare('INSERT OR IGNORE INTO global_skill_links (slug, linked_at) VALUES (?, ?)')
+          for (const s of missing) stmt.run(s, now)
+        } else if (scope === 'project') {
+          const stmt = db.prepare('INSERT OR IGNORE INTO project_skill_links (project_id, slug, linked_at) VALUES (?, ?, ?)')
+          for (const s of missing) stmt.run(ctx.projectId, s, now)
+        } else {
+          const stmt = db.prepare('INSERT OR IGNORE INTO ticket_skill_links (ticket_id, slug, linked_at) VALUES (?, ?, ?)')
+          for (const s of missing) stmt.run(ctx.ticketId, s, now)
+        }
+        attached = missing
+      }
+    })
+    runTx()
+    return { attached, detached }
+  })
+
+  // ============================================================
+  // Repo skills (file-based: <repo>/.devbro/skills.md)
+  // ============================================================
+  ipcMain.handle('skills:readRepo', async (_event, repoPath: string) => {
+    const expandedPath = repoPath.replace(/^~/, os.homedir())
+    const filePath = path.join(expandedPath, '.devbro', 'skills.md')
+    let text: string
+    try {
+      text = fs.readFileSync(filePath, 'utf-8')
+    } catch {
+      return []
+    }
+    const blocks = text.split(/^---$/m)
+    const results: Array<{ name: string; description?: string; command: string }> = []
+    for (const block of blocks) {
+      try {
+        const nameMatch = block.match(/^#\s+(.+)$/m)
+        if (!nameMatch) continue
+        const name = nameMatch[1].trim()
+        const descMatch = block.match(/^>\s+(.+)$/m)
+        const description = descMatch ? descMatch[1].trim() : undefined
+        const cmdMatch = block.match(/^`(.+)`$/m)
+        if (!cmdMatch) continue
+        const command = cmdMatch[1].trim()
+        results.push({ name, description, command })
+      } catch {
+        // skip malformed block
+      }
+    }
+    return results
+  })
+
+  ipcMain.handle('skills:writeRepo', async (_event, repoPath: string, skills: Array<{ name: string; description?: string; command: string }>) => {
+    const expandedPath = repoPath.replace(/^~/, os.homedir())
+    const dir = path.join(expandedPath, '.devbro')
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    const filePath = path.join(dir, 'skills.md')
+    const lines: string[] = []
+    for (let i = 0; i < skills.length; i++) {
+      const s = skills[i]
+      lines.push(`# ${s.name}`)
+      if (s.description) lines.push(`> ${s.description}`)
+      lines.push(`\`${s.command}\``)
+      if (i < skills.length - 1) lines.push('', '---', '')
+    }
+    fs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf-8')
+  })
+
+  // ============================================================
+  // shell:openPath — open a file in the OS default app
+  // ============================================================
+  ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
+    const { shell } = await import('electron')
+    const expanded = filePath.replace(/^~/, os.homedir())
+    return shell.openPath(expanded)
+  })
+
+  // ============================================================
+  // Tab persistence (SQLite)
+  // ============================================================
+  ipcMain.handle('tabs:load', async () => {
+    const db = getDb()
+    const rows = db.prepare('SELECT id, issue_data, tab_order, pinned FROM open_tabs ORDER BY pinned DESC, tab_order ASC').all() as any[]
+    return rows.map((r: any) => ({
+      id: r.id,
+      issueData: JSON.parse(r.issue_data),
+      tabOrder: r.tab_order,
+      pinned: !!r.pinned
+    }))
+  })
+
+  ipcMain.handle('tabs:save', async (_event, tabs: Array<{ id: string; issueData: any; pinned?: boolean }>) => {
+    const db = getDb()
+    const now = Date.now()
+    db.transaction(() => {
+      db.exec('DELETE FROM open_tabs')
+      for (let i = 0; i < tabs.length; i++) {
+        const t = tabs[i]
+        db.prepare('INSERT INTO open_tabs (id, issue_data, tab_order, pinned, saved_at) VALUES (?, ?, ?, ?, ?)').run(
+          t.id,
+          JSON.stringify(t.issueData),
+          i,
+          t.pinned ? 1 : 0,
+          now
+        )
+      }
+    })()
+  })
+
   // ============================================================
   // Open tabs polling (Phase 3 — live Linear awareness)
   // ============================================================
+  // ponytail: notifications only fire for open-tab issues; expand to all-tracked if users want assignment alerts on non-open tickets
   let openTabIds: Set<string> = new Set()
   // Guard: only register tabs:setOpen once across hot-reloads / multi-window
   if (!ipcMain.eventNames().includes('tabs:setOpen')) {
@@ -957,6 +1253,7 @@ ${activityContext}`
   }
 
   let pollingActive = false
+  let isFirstFetch = true
   if (pollIntervalId === null) {
     pollIntervalId = setInterval(async () => {
       if (openTabIds.size === 0 || pollingActive) return
@@ -966,9 +1263,75 @@ ${activityContext}`
           try {
             const fresh = await getActiveConnector().fetchIssue(id)
             if (currentWin && !currentWin.isDestroyed()) currentWin.webContents.send('linear:issueUpdated', fresh)
+
+            // Emit native notifications for meaningful changes (after baseline)
+            if (!isFirstFetch) {
+              const notificationsEnabled = (() => {
+                try {
+                  const db = getDb()
+                  const row = db.prepare('SELECT value FROM app_config WHERE key = ?').get('notifications_enabled') as any
+                  return row?.value !== 'false'
+                } catch { return true }
+              })()
+
+              if (notificationsEnabled) {
+                const cached = lastKnownIssues.get(id)
+
+                // Assigned to me — assignee changed to viewer
+                if (cached?.assignee?.id !== fresh.assignee?.id && fresh.assignee?.id) {
+                  if (!cachedViewerId) {
+                    try {
+                      const viewer = await getLinearClient().viewer
+                      cachedViewerId = viewer.id
+                    } catch {}
+                  }
+                  if (fresh.assignee.id === cachedViewerId) {
+                    new Notification({
+                      title: 'Assigned to You',
+                      body: `${fresh.identifier} — ${fresh.title}`,
+                      silent: false,
+                    }).show()
+                  }
+                }
+
+                // Status changed
+                if (cached && (cached.state?.id !== fresh.state?.id || cached.state?.name !== fresh.state?.name)) {
+                  new Notification({
+                    title: 'Status Updated',
+                    body: `${fresh.identifier}: ${cached.state?.name} → ${fresh.state?.name}`,
+                    silent: false,
+                  }).show()
+                }
+
+                // Deadline < 48h
+                if (fresh.dueDate) {
+                  const now = Date.now()
+                  const deadline = new Date(fresh.dueDate).getTime()
+                  const hoursUntil = (deadline - now) / (1000 * 60 * 60)
+                  const dedupeKey = `${id}:${fresh.dueDate}`
+
+                  if (hoursUntil > 0 && hoursUntil < 48 && !deadlineNotified.has(dedupeKey)) {
+                    const hours = Math.round(hoursUntil)
+                    deadlineNotified.add(dedupeKey)
+                    new Notification({
+                      title: 'Deadline Soon',
+                      body: `${fresh.identifier} due in ${hours}h`,
+                      silent: false,
+                    }).show()
+                  }
+                }
+              }
+
+              lastKnownIssues.set(id, fresh)
+            }
           } catch {
             // ignore per-issue errors
           }
+        }
+
+        // After first poll, use subsequent fetches for notifications
+        if (isFirstFetch) {
+          isFirstFetch = false
         }
       } finally {
         pollingActive = false
@@ -978,5 +1341,115 @@ ${activityContext}`
 
   win.on('closed', () => {
     openTabIds.clear()
+  })
+
+  // ============================================================
+  // GitHub handlers
+  // ============================================================
+  ipcMain.handle('github:testAuth', async () => {
+    return github.testAuth()
+  })
+
+  ipcMain.handle('github:getPrForBranch', async (_event, repoPath: string, branch: string) => {
+    const workDir = getWorkDir()
+    const fullPath = repoPath.startsWith('~')
+      ? repoPath.replace(/^~/, os.homedir())
+      : path.join(workDir, repoPath)
+    const remote = github.getRepoFromRemote(fullPath)
+    if (!remote) return null
+    const pr = await github.findPrForBranch(remote.owner, remote.name, branch)
+    if (!pr) return null
+    const checks = await github.getPrChecks(remote.owner, remote.name, pr.headSha)
+    return { ...pr, checks }
+  })
+
+  ipcMain.handle('github:createPr', async (_event, repoPath: string, opts: { title: string; body: string; head: string; base: string }) => {
+    const workDir = getWorkDir()
+    const fullPath = repoPath.startsWith('~')
+      ? repoPath.replace(/^~/, os.homedir())
+      : path.join(workDir, repoPath)
+    const remote = github.getRepoFromRemote(fullPath)
+    if (!remote) throw new Error('Could not resolve GitHub remote')
+    return github.createPr(remote.owner, remote.name, opts)
+  })
+
+  ipcMain.handle('github:createBranch', async (_event, repoPath: string, branchName: string, base: string = 'main') => {
+    const { execSync } = require('child_process')
+    const workDir = getWorkDir()
+    const fullPath = repoPath.startsWith('~')
+      ? repoPath.replace(/^~/, os.homedir())
+      : path.join(workDir, repoPath)
+    try {
+      const safeExec = (cmd: string) => execSync(cmd, { cwd: fullPath, timeout: 10000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()
+      const current = safeExec('git branch --show-current')
+      if (current !== base) safeExec(`git checkout ${base}`)
+      safeExec(`git checkout -b ${branchName}`)
+      return { ok: true, branch: branchName }
+    } catch (err: any) {
+      return { ok: false, error: err?.stderr?.toString() || err?.message || 'git error' }
+    }
+  })
+
+  ipcMain.handle('github:draftPrBody', async (_event, repoPath: string, branch: string, base: string, ticketTitle: string, ticketDesc: string) => {
+    const { execSync } = require('child_process')
+    const workDir = getWorkDir()
+    const fullPath = repoPath.startsWith('~')
+      ? repoPath.replace(/^~/, os.homedir())
+      : path.join(workDir, repoPath)
+    let diffStat = ''
+    try {
+      diffStat = execSync(`git diff ${base}..${branch} --stat`, { cwd: fullPath, timeout: 10000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }).trim().slice(0, 3000)
+    } catch {}
+    const prompt = `Write a GitHub PR description in Markdown for this change.
+
+Ticket: ${ticketTitle}
+Description: ${(ticketDesc || '').slice(0, 600)}
+Branch: ${branch} → ${base}
+
+Diff stat:
+${diffStat || '(no diff available)'}
+
+Format:
+## Summary
+(2-4 bullet points of what changed)
+
+## Test plan
+- [ ] (checklist of things to verify)
+
+Keep it concise and developer-focused.`
+    const callId = uuidv4()
+    const result = await runClaudeStreaming({ prompt, callId, win: currentWin, cwd: fullPath })
+    return { ok: result.ok, body: result.output, callId }
+  })
+
+  // ============================================================
+  // Installable Skills (git-cloned, ~/.devbro/skills/<slug>)
+  // ============================================================
+  ipcMain.handle('skillPkg:list', async () => skills.listSkills())
+  ipcMain.handle('skillPkg:install', async (_event, url: string) => skills.installFromGit(url))
+  ipcMain.handle('skillPkg:uninstall', async (_event, slug: string) => skills.uninstallSkill(slug))
+  ipcMain.handle('skillPkg:update', async (_event, slug: string) => skills.updateSkill(slug))
+  ipcMain.handle('skillPkg:apply', async (_event, slug: string, ctx: skills.TicketContext) => {
+    return skills.applySkill(slug, ctx, currentWin)
+  })
+  ipcMain.handle('skillPkg:discover', async (_event, force?: boolean) => skills.fetchRegistry(!!force))
+  ipcMain.handle('skillPkg:getRegistryUrl', async () => {
+    const db = getDb()
+    const row = db.prepare('SELECT value FROM app_config WHERE key = ?').get('skills_registry_url') as any
+    return row?.value ?? null
+  })
+  ipcMain.handle('skillPkg:setRegistryUrl', async (_event, url: string) => {
+    const db = getDb()
+    db.prepare('INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)').run('skills_registry_url', url)
+    return { ok: true }
+  })
+  ipcMain.handle('skillPkg:openFolder', async (_event, slug: string) => skills.openSkillFolder(slug))
+  ipcMain.handle('skillPkg:getBody', async (_event, slug: string) => skills.getSkillBody(slug))
+  ipcMain.handle('skillPkg:appliedHistory', async (_event, ticketId?: string) => {
+    const db = getDb()
+    if (ticketId) {
+      return db.prepare('SELECT * FROM skill_applications WHERE ticket_id = ? ORDER BY applied_at DESC LIMIT 50').all(ticketId)
+    }
+    return db.prepare('SELECT * FROM skill_applications ORDER BY applied_at DESC LIMIT 50').all()
   })
 }

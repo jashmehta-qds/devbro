@@ -24,6 +24,7 @@ export function TerminalSessionView({ sessionId, issue, visible, resizeSignal }:
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const [ready, setReady] = useState(false)
+  const [ctxLoading, setCtxLoading] = useState(false)
 
   // Create the xterm instance once.
   useEffect(() => {
@@ -126,6 +127,12 @@ export function TerminalSessionView({ sessionId, issue, visible, resizeSignal }:
     }
   }, [sessionId, issue])
 
+  useEffect(() => {
+    const un1 = window.api.terminal.onContextInjecting(sessionId, () => setCtxLoading(true))
+    const un2 = window.api.terminal.onContextReady(sessionId, () => setCtxLoading(false))
+    return () => { un1(); un2() }
+  }, [sessionId])
+
   return (
     <div className="flex flex-col h-full" style={{ display: visible ? 'flex' : 'none' }}>
       <div className="flex items-center justify-end gap-2 px-3 py-1 border-b border-border flex-shrink-0">
@@ -145,6 +152,13 @@ export function TerminalSessionView({ sessionId, issue, visible, resizeSignal }:
       </div>
       <div className="flex-1 overflow-hidden relative" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.03)' }}>
         <div ref={containerRef} className="w-full h-full p-3" />
+        {ctxLoading && (
+          <div className="absolute inset-0 bg-gray-950/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3 z-10 animate-fade-in">
+            <div className="w-8 h-8 rounded-full border-2 border-violet-500/30 border-t-violet-400 animate-spin" />
+            <div className="text-sm text-gray-100">Loading session context…</div>
+            <div className="text-[11px] text-gray-500">Claude is reading your ticket, guidelines, and skills</div>
+          </div>
+        )}
       </div>
     </div>
   )

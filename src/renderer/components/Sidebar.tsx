@@ -73,6 +73,8 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: { collapsed?: b
     openDashboardTab,
     helpOpen,
     openHelpTab,
+    skillsOpen,
+    openSkillsTab,
     standupOpen,
     setStandupOpen,
     openTab,
@@ -559,6 +561,18 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: { collapsed?: b
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          }
+        />
+        <LauncherPill
+          active={skillsOpen}
+          onClick={openSkillsTab}
+          label="Skills"
+          shortcut="⌘E"
+          icon={
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 6V4m0 16v-2m6-6h2M4 12h2m10.5-5.5l1.5-1.5m-13 13l1.5-1.5m0-10l-1.5-1.5m13 13l1.5-1.5M12 8a4 4 0 100 8 4 4 0 000-8z" />
             </svg>
           }
         />

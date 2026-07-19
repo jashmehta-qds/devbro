@@ -132,6 +132,7 @@ export interface IssueTab {
   terminalSessionId: string | null
   terminalOpen: boolean
   activeSection: TabType
+  pinned?: boolean
 }
 
 export interface AppState {
@@ -246,6 +247,47 @@ export interface ProjectDetails {
   milestones: ProjectMilestone[]
 }
 
+export interface SkillManifest {
+  _slug: string
+  _dir: string
+  name: string
+  description: string
+  type: 'prompt' | 'command'
+  apply_to?: 'terminal' | 'claude_md'
+  command?: string
+  tags: string[]
+  body: string
+  installedFromRepo?: string
+}
+
+export interface RegistryEntry {
+  name: string
+  description: string
+  repo: string
+  author?: string
+  tags: string[]
+  stars?: number
+}
+
+export interface TicketContext {
+  ticketId: string
+  issue: {
+    identifier: string
+    title: string
+    description?: string
+    branch?: string
+  }
+  repoPath?: string
+}
+
+export interface SkillApplication {
+  id: string
+  slug: string
+  ticket_id: string | null
+  applied_at: number
+  outcome: string
+}
+
 export interface WindowApi {
   linear: {
     getProjects: () => Promise<LinearProject[]>
@@ -258,6 +300,8 @@ export interface WindowApi {
   }
   tabs: {
     setOpen: (tabIds: string[]) => Promise<void>
+    load: () => Promise<Array<{ id: string; issueData: any; tabOrder: number; pinned: boolean }>>
+    save: (tabs: Array<{ id: string; issueData: any; pinned?: boolean }>) => Promise<void>
   }
   notes: {
     get: (ticketId: string) => Promise<Note | null>
@@ -266,6 +310,7 @@ export interface WindowApi {
   checklist: {
     get: (ticketId: string) => Promise<Checklist | null>
     save: (ticketId: string, items: ChecklistItem[]) => Promise<Checklist>
+    generate: (ticketId: string, title: string, description: string) => Promise<string[] | null>
   }
   skills: {
     list: (ticketId: string) => Promise<Skill[]>
@@ -280,6 +325,9 @@ export interface WindowApi {
   eli5: {
     get: (ticketId: string) => Promise<string | null>
     generate: (ticketId: string, title: string, description: string) => Promise<string>
+    explainDiff: (ticketId: string, issue: any, repoPaths: string | string[]) => Promise<string | null>
+    risks: (ticketId: string, issue: any, repoPaths?: string | string[]) => Promise<string | null>
+    draftPr: (ticketId: string, issue: any, repoPaths?: string | string[]) => Promise<string | null>
   }
   projectConfig: {
     getAll: () => Promise<ProjectConfig[]>
@@ -308,6 +356,8 @@ export interface WindowApi {
     detach: (sessionId: string) => Promise<void>
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (code: number) => void) => () => void
+    onContextInjecting: (sessionId: string, callback: () => void) => () => void
+    onContextReady: (sessionId: string, callback: () => void) => () => void
     onAnyExit: (callback: (payload: { sessionId: string; code: number; evicted: boolean }) => void) => () => void
   }
   memory: {
@@ -349,16 +399,35 @@ export interface WindowApi {
   projectSkills: {
     list: (projectId: string) => Promise<Array<{ id: string; project_id: string; name: string; command: string; created_at: number }>>
     add: (projectId: string, name: string, command: string) => Promise<{ id: string; project_id: string; name: string; command: string; created_at: number }>
+    update: (skillId: string, name: string, command: string) => Promise<{ id: string; project_id: string; name: string; command: string; created_at: number }>
     delete: (skillId: string) => Promise<void>
   }
   globalSkills: {
     list: () => Promise<Array<{ id: string; name: string; command: string; created_at: number }>>
     add: (name: string, command: string) => Promise<{ id: string; name: string; command: string; created_at: number }>
+    update: (skillId: string, name: string, command: string) => Promise<{ id: string; name: string; command: string; created_at: number }>
     delete: (skillId: string) => Promise<void>
+  }
+  skillLinks: {
+    listForTicket: (ticketId: string, projectId: string | null) => Promise<{ global: string[]; project: string[]; ticket: string[] }>
+    setSingle: (
+      slug: string,
+      scope: 'global' | 'project' | 'ticket',
+      on: boolean,
+      ctx: { projectId?: string; ticketId?: string }
+    ) => Promise<{ ok: boolean; error?: string }>
+    toggleBatch: (
+      slugs: string[],
+      scope: 'global' | 'project' | 'ticket',
+      ctx: { projectId?: string; ticketId?: string }
+    ) => Promise<{ attached: string[]; detached: string[]; error?: string }>
   }
   window: {
     toggleMaximize: () => Promise<void>
     isMaximized: () => Promise<boolean>
+  }
+  workDir: {
+    get: () => Promise<string>
   }
   standup: {
     generate: () => Promise<{ standup: string; raw: string; usedAI: boolean }>
@@ -376,5 +445,18 @@ export interface WindowApi {
   ai: {
     onChunk: (callback: (payload: { callId: string; text: string }) => void) => () => void
     onDone: (callback: (payload: { callId: string; output: string; ok: boolean }) => void) => () => void
+  }
+  skillPkg: {
+    list: () => Promise<SkillManifest[]>
+    install: (url: string) => Promise<{ ok: boolean; slug?: string; name?: string; error?: string }>
+    uninstall: (slug: string) => Promise<{ ok: boolean; error?: string }>
+    update: (slug: string) => Promise<{ ok: boolean; changed: boolean; error?: string }>
+    apply: (slug: string, ctx: TicketContext) => Promise<{ ok: boolean; kind?: string; command?: string; callId?: string; mdPath?: string; error?: string }>
+    discover: (force?: boolean) => Promise<{ ok: boolean; skills: RegistryEntry[]; error?: string }>
+    getRegistryUrl: () => Promise<string | null>
+    setRegistryUrl: (url: string) => Promise<{ ok: boolean }>
+    openFolder: (slug: string) => Promise<{ ok: boolean; error?: string }>
+    getBody: (slug: string) => Promise<string>
+    appliedHistory: (ticketId?: string) => Promise<SkillApplication[]>
   }
 }

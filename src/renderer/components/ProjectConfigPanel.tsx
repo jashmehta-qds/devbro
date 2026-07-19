@@ -235,6 +235,86 @@ function WorkDirSetting() {
   )
 }
 
+function GitHubSetting() {
+  const [pat, setPat] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; user?: string } | null>(null)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    window.api.appConfig.get('github_pat').then((v: string | null) => {
+      if (v) setPat(v)
+    }).catch(() => {})
+  }, [])
+
+  const handleSave = async () => {
+    await window.api.appConfig.set('github_pat', pat.trim())
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  const handleTest = async () => {
+    if (!pat.trim()) return
+    setTesting(true)
+    setTestResult(null)
+    try {
+      await window.api.appConfig.set('github_pat', pat.trim())
+      const result = await (window.api as any).github.testAuth()
+      setTestResult(result)
+    } catch {
+      setTestResult({ ok: false })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-soft">
+      <label className="block text-sm text-gray-200 font-medium mb-1">Personal Access Token</label>
+      <p className="text-xs text-gray-500 mb-4">
+        Enables PR status chips and branch creation. Generate at GitHub Settings → Developer settings → PAT (classic). Needs <code className="font-mono">repo</code> scope.
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          type="password"
+          value={pat}
+          onChange={e => { setPat(e.target.value); setTestResult(null) }}
+          placeholder="ghp_…"
+          className="flex-1 bg-gray-950 border border-gray-800 rounded-lg h-9 px-3 text-sm text-gray-100 placeholder:text-gray-600 focus:border-gray-600 focus:ring-0 outline-none transition-colors font-mono"
+          onKeyDown={e => { if (e.key === 'Enter') handleSave() }}
+        />
+        <button
+          onClick={handleTest}
+          disabled={testing || !pat.trim()}
+          className="flex-shrink-0 h-9 px-3 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-300 text-sm font-medium transition-colors"
+        >
+          {testing ? '…' : 'Test'}
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={!pat.trim()}
+          className={`flex-shrink-0 h-9 px-4 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+            saved
+              ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+              : 'bg-violet-600 hover:bg-violet-500 text-white shadow-soft'
+          }`}
+        >
+          {saved ? '✓ Saved' : 'Save'}
+        </button>
+      </div>
+      {testResult && (
+        <div className={`mt-3 text-xs px-3 py-2 rounded-lg border ${
+          testResult.ok
+            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+            : 'bg-red-500/10 border-red-500/20 text-red-400'
+        }`}>
+          {testResult.ok ? `✓ Authenticated as ${testResult.user}` : '✕ Authentication failed — check your PAT'}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TerminalSessionsSetting() {
   const [maxSessions, setMaxSessions] = useState('1')
   const [fontSize, setFontSize] = useState('14')
@@ -325,6 +405,55 @@ function TerminalSessionsSetting() {
   )
 }
 
+function NotificationsSetting() {
+  const [enabled, setEnabled] = useState(true)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    window.api.appConfig.get('notifications_enabled').then(v => {
+      setEnabled(v !== 'false')
+    }).catch(() => setEnabled(true))
+  }, [])
+
+  const handleToggle = async () => {
+    const newVal = !enabled
+    setEnabled(newVal)
+    await window.api.appConfig.set('notifications_enabled', String(newVal))
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-soft">
+      <div className="flex items-center justify-between">
+        <div className="flex-1">
+          <label className="block text-sm text-gray-200 font-medium mb-1">Notifications</label>
+          <p className="text-xs text-gray-500">
+            Notify on assigned / status change / deadline soon
+          </p>
+        </div>
+        <button
+          onClick={handleToggle}
+          className={`ml-4 flex-shrink-0 w-10 h-6 rounded-full transition-colors ${
+            enabled ? 'bg-emerald-600' : 'bg-gray-700'
+          } flex items-center`}
+        >
+          <div
+            className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${
+              enabled ? 'translate-x-4.5' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+      </div>
+      {saved && (
+        <div className="text-xs mt-3 px-2 py-1 rounded text-emerald-400">
+          ✓ Updated
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ProjectConfigPanel() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [savedConfigs, setSavedConfigs] = useState<Record<string, Record<string, string>>>({})
@@ -369,6 +498,11 @@ export function ProjectConfigPanel() {
         </div>
 
         <div className="mb-10">
+          <h3 className="text-[11px] uppercase tracking-[0.14em] text-gray-500 font-medium mb-3">GitHub</h3>
+          <GitHubSetting />
+        </div>
+
+        <div className="mb-10">
           <h3 className="text-[11px] uppercase tracking-[0.14em] text-gray-500 font-medium mb-3">Work Directory</h3>
           <WorkDirSetting />
         </div>
@@ -376,6 +510,11 @@ export function ProjectConfigPanel() {
         <div className="mb-10">
           <h3 className="text-[11px] uppercase tracking-[0.14em] text-gray-500 font-medium mb-3">Terminal Settings</h3>
           <TerminalSessionsSetting />
+        </div>
+
+        <div className="mb-10">
+          <h3 className="text-[11px] uppercase tracking-[0.14em] text-gray-500 font-medium mb-3">Notifications</h3>
+          <NotificationsSetting />
         </div>
 
         <div className="mb-10">

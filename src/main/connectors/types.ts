@@ -15,6 +15,7 @@ export interface ConnectorIssue {
   labels?: Array<{ id: string; name: string; color: string }>
   cycleId?: string | null
   milestoneId?: string | null
+  dueDate?: string | null
 }
 
 export interface ConnectorCycle {
